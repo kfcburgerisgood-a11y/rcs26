@@ -92,7 +92,7 @@ def segments(brief, drawing):
     --------
     >>> from roof_circulation import Brief, Drawing
     >>> [s.kind for s in segments(Brief(), Drawing.sample())[0]]
-    ['ramp', 'ramp', 'stairs', 'ramp']
+    ['ramp', 'stairs', 'ramp', 'ramp', 'stairs', 'ramp']
     """
     result = []
     for path in drawing.paths:
@@ -178,9 +178,9 @@ def circulation(brief, drawing):
     >>> from roof_circulation import Brief, Drawing
     >>> brief = Brief()
     >>> part = circulation(brief, Drawing.sample())
-    >>> round(part.add.get_distance([2000, 1500, 700]), 3)     # 100 mm over the walking surface
+    >>> round(part.add.get_distance([5000, 4500, 1500]), 3)    # 100 mm over the terrace, at 1400
     100.0
-    >>> part.cut.get_distance([2000, 1500, 1600]) < 0         # a metre above it
+    >>> part.cut.get_distance([5000, 4500, 2400]) < 0         # a metre above it
     True
     """
     runs = segments(brief, drawing)
