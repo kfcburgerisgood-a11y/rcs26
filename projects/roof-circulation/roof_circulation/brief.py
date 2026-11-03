@@ -48,6 +48,9 @@ class Brief:
     wave: float = 0.0               # height of the wave: 0 for none
     wavelength: float = 6000.0      # crest to crest
 
+    # reading the roof
+    cell: float = 250.0             # plan grid for the slope map
+
     # where to look for the host's surface, and how to sample it
     search_top: float = 6000.0      # above any roof
     search_bottom: float = -2000.0  # below any roof

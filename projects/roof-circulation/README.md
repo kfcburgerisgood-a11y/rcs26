@@ -30,6 +30,7 @@ that allows about `wavelength / 75` (80 mm for a 6 m wave).
 | Function | Makes |
 |---|---|
 | `host` | a stand-in rocky roof (`VolRock`); any field can replace it, a mesh through `VolGrid.from_mesh` |
+| `slopes` | the roof's top and slope every `cell` mm: where a path could follow it as it is; holes marked |
 | `ground` | the roof's surface under every path, followed every `spacing` mm |
 | `grade` | the walking level: the surface averaged over `smoothing`, plus the wave, within 1:12, meeting the roof at both ends, through every pin, level at every turn |
 | `segments` | the graded path as straight pieces, each reaching `depth` into the roof below it |

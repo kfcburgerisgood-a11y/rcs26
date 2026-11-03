@@ -2,7 +2,29 @@
 
 import numpy as np
 
-__all__ = ["plan", "profile", "section"]
+__all__ = ["plan", "slope_map", "profile", "section"]
+
+
+def slope_map(found, ramp_max, easy=1 / 20, contour=100.0, title="where a path could go"):
+    """The host's plan by slope: easy, a ramp, too steep, or no host; with height contours every ``contour`` mm."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from matplotlib.patches import Patch
+
+    classes = np.where(np.isnan(found.slope), 3, np.digitize(np.nan_to_num(found.slope), [easy, ramp_max]))
+    colours = ["#cfe8c4", "#8cc084", "#d97a6c", "#ffffff"]
+    _, ax = plt.subplots(figsize=(9, 6))
+    extent = (found.x[0], found.x[-1], found.y[0], found.y[-1])
+    ax.imshow(classes.T, origin="lower", extent=extent, cmap=ListedColormap(colours), vmin=0, vmax=3)
+    levels = np.arange(np.floor(np.nanmin(found.height) / contour), np.ceil(np.nanmax(found.height) / contour) + 1)
+    ax.contour(found.x, found.y, found.height.T, levels * contour, colors="0.3", linewidths=0.5)
+    labels = ["easy, under 1:{:.0f}".format(1 / easy), "a ramp, to 1:{:.0f}".format(1 / ramp_max),
+              "too steep to follow", "no roof"]
+    ax.legend(handles=[Patch(color=c, label=t) for c, t in zip(colours, labels)], loc="upper right", fontsize=8)
+    share = found.walkable(ramp_max).mean()
+    ax.set_title("{}: {:.0%} walkable as it is".format(title, share))
+    ax.set_aspect("equal")
+    return ax
 
 
 def plan(bounds, host, profiles, samples=200, title="paths on the host"):

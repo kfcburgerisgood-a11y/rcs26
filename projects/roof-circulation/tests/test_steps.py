@@ -3,10 +3,11 @@
 import compas
 import numpy as np
 import pytest
-from compas.geometry import Point, Polyline
+from compas.geometry import Frame, Plane, Point, Polyline
 
 from compas_vol import nodes
 from compas_vol.meshing import is_watertight
+from compas_vol.primitives import VolPlane
 from roof_circulation import Brief, Contribution, Drawing, checks, combine, steps
 
 FLAT = Brief(roughness=0.0)             # the roof's top at 600 everywhere: levels are known
@@ -39,6 +40,32 @@ def test_a_brief_never_allows_a_ramp_steeper_than_1_in_12():
     with pytest.raises(ValueError, match="at most 1:12"):
         Brief(ramp_max=1 / 10)
     assert Brief(ramp_max=1 / 20).ramp_max == pytest.approx(0.05)     # gentler is fine
+
+
+SMALL = Brief(length=4000.0, span=3000.0)
+
+
+def tilted(slope):
+    """A roof whose top rises along X at ``slope``: 600 at x = 0."""
+    block = nodes.box(Frame([2000, 1500, 1500], [1, 0, 0], [0, 1, 0]), 4000.0, 3000.0, 3000.0, 0)
+    return nodes.boolean([block, VolPlane(Plane([0, 0, 600], [-slope, 0, 1]))], "intersection", 0)
+
+
+@pytest.mark.parametrize("slope", [1 / 20, 1 / 8])
+def test_the_slope_map_reads_a_known_slope(slope):
+    found = steps.slopes(SMALL, tilted(slope))
+    assert found.slope == pytest.approx(slope, abs=1e-4)
+    assert found.height[0, 0] == pytest.approx(600 + slope * found.x[0], abs=0.05)
+    assert found.walkable(SMALL.ramp_max).all() == (slope <= SMALL.ramp_max)
+
+
+def test_the_slope_map_marks_a_hole_as_no_roof():
+    block = nodes.box(Frame([2000, 1500, 300], [1, 0, 0], [0, 1, 0]), 4000.0, 3000.0, 600.0, 0)
+    hole = nodes.cylinder(Frame([2000, 1500, 300], [1, 0, 0], [0, 1, 0]), 600.0, 1000.0)
+    found = steps.slopes(SMALL, nodes.boolean([block, hole], "difference", 0))
+    i, j = np.searchsorted(found.x, 2000), np.searchsorted(found.y, 1500)
+    assert np.isnan(found.height[i, j]) and not found.walkable(SMALL.ramp_max)[i, j]
+    assert found.walkable(SMALL.ramp_max)[0, 0]                         # far from it: flat roof
 
 
 def test_the_ground_is_found_where_the_host_is():

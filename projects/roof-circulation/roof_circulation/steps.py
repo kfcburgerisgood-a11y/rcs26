@@ -26,8 +26,8 @@ from .contribution import Contribution, combine
 from .rock import VolRock
 
 __all__ = [
-    "Profile", "Segment", "host", "ground", "grade", "segments", "walk", "clearance", "support", "circulation",
-    "combine", "extent", "export",
+    "Profile", "Segment", "SlopeMap", "host", "slopes", "ground", "grade", "segments", "walk", "clearance", "support",
+    "circulation", "combine", "extent", "export",
 ]
 
 OVERLAP = 1.0   # mm: neighbouring pieces overlap this much, so the seam between them never reads as a surface
@@ -91,12 +91,16 @@ def host(brief):
     return VolRock(brief.length, brief.span, brief.thickness, brief.roughness, brief.rock_cell, brief.rock_seed)
 
 
-def _surface(brief, host, x, y):
-    """The host's highest surface over plan points: scanned down every ``voxel`` mm, then bisected."""
+def _surface(brief, host, x, y, holes=False):
+    """The host's highest surface over plan points: scanned down every ``voxel`` mm, then bisected.
+
+    Where there is no host, refuses, or with ``holes`` gives NaN.
+    """
     zs = np.arange(brief.search_top, brief.search_bottom, -brief.voxel)
     inside = host.get_distance_numpy(x[:, None, None], y[:, None, None], zs[None, None, :])[:, 0, :] < 0
-    if not inside.any(axis=1).all():
-        i = int(np.argmin(inside.any(axis=1)))
+    found = inside.any(axis=1)
+    if not found.all() and not holes:
+        i = int(np.argmin(found))
         raise ValueError("No host under the path at ({:.0f}, {:.0f}).".format(x[i], y[i]))
     first = inside.argmax(axis=1)
     lo, hi = zs[first], zs[np.maximum(first - 1, 0)]
@@ -106,7 +110,45 @@ def _surface(brief, host, x, y):
         lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
     mid = (lo + hi) / 2
     # one step by the distance itself: exact where the field is, and never past the surface where it is a bound
-    return mid - host.get_distance_numpy(x[:, None, None], y[:, None, None], mid[:, None, None])[:, 0, 0]
+    top = mid - host.get_distance_numpy(x[:, None, None], y[:, None, None], mid[:, None, None])[:, 0, 0]
+    return np.where(found, top, np.nan)
+
+
+@dataclass
+class SlopeMap:
+    """The host's top on a plan grid, and how steep it is there."""
+
+    x: np.ndarray           # grid lines, along X
+    y: np.ndarray           # and along Y
+    height: np.ndarray      # the top, shape (len(x), len(y)); NaN where there is no host
+    slope: np.ndarray       # rise over run, steepest way; NaN where there is no host
+
+    def walkable(self, ramp_max):
+        """Where the top is no steeper than ``ramp_max``: where a path could follow it as it is."""
+        return np.nan_to_num(self.slope, nan=np.inf) <= ramp_max
+
+
+def slopes(brief, host):
+    """Step 2: the host's slope over its plan, every ``cell`` mm. *Canvas: a mesh coloured by slope.*
+
+    Reads ``length``, ``span``, ``cell``, and the search numbers. Samples the plan
+    box of ``length`` by ``span``, so give them the real roof's plan. Holes, such
+    as another module's light openings, come back NaN: not walkable.
+
+    Examples
+    --------
+    >>> from roof_circulation import Brief
+    >>> brief = Brief(roughness=0.0, length=3000.0, span=2000.0)
+    >>> found = slopes(brief, host(brief))
+    >>> float(np.nanmax(found.slope)), bool(found.walkable(brief.ramp_max).all())
+    (0.0, True)
+    """
+    x = np.arange(brief.cell / 2, brief.length, brief.cell)
+    y = np.arange(brief.cell / 2, brief.span, brief.cell)
+    gx, gy = np.meshgrid(x, y, indexing="ij")
+    height = _surface(brief, host, gx.ravel(), gy.ravel(), holes=True).reshape(gx.shape)
+    dx, dy = np.gradient(height, brief.cell, brief.cell)
+    return SlopeMap(x, y, height, np.hypot(dx, dy))
 
 
 def ground(brief, host, drawing):
