@@ -23,7 +23,7 @@ class Drawing:
     --------
     >>> drawing = Drawing.sample()
     >>> len(drawing.paths), len(drawing.paths[0])
-    (1, 7)
+    (1, 8)
     >>> Drawing.from_data(compas.json_loads(compas.json_dumps(drawing.to_data()))).paths[0][1] == drawing.paths[0][1]
     True
     """
@@ -49,10 +49,10 @@ class Drawing:
     def sample(cls):
         """A path over the stand-in roof that rises and falls.
 
-        A ramp up from the deck (at 600), stairs up to a terrace, a ramp down, then
-        stairs down to 200 mm below the deck, ending in the trench it cuts.
+        A long level stretch on the deck (at 600), a ramp up, stairs up to a terrace,
+        a ramp down, then stairs down to 200 mm below the deck, ending in the trench it cuts.
         """
         return cls([Polyline([
-            [800, 1500, 600], [3300, 1500, 800], [3300, 4500, 1400], [6300, 4500, 1400],
-            [9000, 4500, 1200], [9000, 1500, 400], [11200, 1500, 400],
+            [1000, 2000, 600], [9000, 2000, 600], [14000, 2000, 950], [14000, 5500, 1550], [14000, 9000, 1550],
+            [8000, 9000, 1200], [8000, 6000, 400], [3000, 6000, 400],
         ])])

@@ -1,5 +1,7 @@
 """The workflow's steps: they run, and they keep their rules. Add a test for each rule you add."""
 
+import math
+
 import compas
 import pytest
 from compas.geometry import Polyline
@@ -13,10 +15,10 @@ def straight(*points):
     return Drawing([Polyline([list(p) for p in points])])
 
 
-# the tests' own path, so the sample drawing can change: level, a 1:15 ramp, a turn, 4 steps up, a terrace
-CLIMB = straight((1000, 1500, 600), (4500, 1500, 600), (7500, 1500, 800), (7500, 4500, 1400), (10500, 4500, 1400))
-# and one that goes down: a 1:15 ramp to the deck, a turn, 3 steps down to 400 mm below it
-DROP = straight((1000, 1500, 800), (4000, 1500, 600), (4000, 4500, 200), (7000, 4500, 200))
+# the tests' own path, so the sample drawing can change: level, a 1:13.3 ramp, a turn, 5 steps up, a terrace
+CLIMB = straight((1000, 1500, 600), (4500, 1500, 600), (7500, 1500, 780), (7500, 4500, 1400), (10500, 4500, 1400))
+# and one that goes down: a 1:14 ramp to the deck, a turn, 3 steps down to 400 mm below it
+DROP = straight((1000, 1500, 800), (5000, 1500, 600), (5000, 4500, 200), (8000, 4500, 200))
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +42,7 @@ def test_a_brief_rejects_unknown_fields():
 
 
 def test_a_run_up_to_ramp_max_is_a_ramp_and_steeper_is_stairs(brief):
-    gentle = steps.segments(brief, straight((0, 0, 0), (1200, 0, 100)))[0][0]
+    gentle = steps.segments(brief, straight((0, 0, 0), (2600, 0, 100)))[0][0]     # 1:14 between its landings
     steep = steps.segments(brief, straight((0, 0, 0), (3000, 0, 400)))[0][0]
     assert gentle.kind == "ramp"
     assert steep.kind == "stairs" and steep.risers == 3          # 400 / 150, rounded up
@@ -54,8 +56,19 @@ def test_a_path_straight_up_is_refused(brief):
 
 def test_the_walking_surface_is_where_the_drawing_puts_it(part):
     assert part.add.get_distance([2000, 1500, 700]) == pytest.approx(100.0)             # level, at 600
-    assert part.add.get_distance([6000, 1500, 800]) == pytest.approx(100 / (1 + (1 / 15) ** 2) ** 0.5)  # ramp, 700
-    assert part.add.get_distance([7500, 2775, 1150]) == pytest.approx(50.0)            # second step, 1100
+    # the ramp has no landing where it continues the level run, and one 600 long at the turn
+    assert part.add.get_distance([6000, 1500, 812.5]) == pytest.approx(100 / (1 + 0.075 ** 2) ** 0.5)  # 712.5
+    assert part.add.get_distance([7200, 1500, 880]) == pytest.approx(100.0)            # its landing, at 780
+    assert part.add.get_distance([7500, 2640, 1078]) == pytest.approx(50.0)            # second step, 1028
+
+
+@pytest.mark.parametrize("drawing", [CLIMB, DROP], ids=["climb", "drop"])
+def test_nothing_stands_proud_of_a_ramp_where_it_meets_a_vertex(brief, drawing):
+    walk = steps.circulation(brief, drawing).add
+    for seg in steps.segments(brief, drawing)[0]:
+        if seg.kind == "ramp" and seg.rise:
+            for x, y, z in seg.points(100):
+                assert walk.get_distance([x, y, z + 5]) > 0, (x, y, z)
 
 
 def test_a_path_going_down_ramps_and_steps_like_one_going_up(brief):
@@ -63,15 +76,56 @@ def test_a_path_going_down_ramps_and_steps_like_one_going_up(brief):
     assert [s.kind for s in runs] == ["ramp", "stairs", "ramp"]
     assert runs[1].risers == 3 and runs[1].going == pytest.approx(600.0)
     walk = steps.circulation(brief, DROP).add
-    assert walk.get_distance([2500, 1500, 800]) == pytest.approx(100 / (1 + (1 / 15) ** 2) ** 0.5)  # ramp, 700
-    assert walk.get_distance([4000, 3600, 200 + 400 / 3 + 50]) == pytest.approx(50.0)    # lowest step
+    level = 600 + 200 * (2500 - 600) / 2800                                              # 2500 from the low end
+    assert walk.get_distance([2500, 1500, level + 100]) == pytest.approx(100 / (1 + (2 / 28) ** 2) ** 0.5)
+    assert walk.get_distance([5000, 3600, 200 + 400 / 3 + 50]) == pytest.approx(50.0)    # lowest step
 
 
 def test_a_path_below_the_deck_cuts_its_own_trench(brief):
     solid = combine(steps.host(brief), [steps.circulation(brief, DROP)])
-    assert solid.get_distance([5500, 4500, 500]) > 0          # over the sunken path: open
-    assert solid.get_distance([5500, 3000, 500]) < 0          # beside it: still deck
+    assert solid.get_distance([6500, 4500, 500]) > 0          # over the sunken path: open
+    assert solid.get_distance([6500, 3000, 500]) < 0          # beside it: still deck
     counts = checks.path_clear(brief, steps.segments(brief, DROP), solid)
+    assert counts["unsupported"] == 0 and counts["blocked"] == 0
+
+
+WAVY = Brief(wave=80.0, wavelength=6000.0)
+
+
+def test_no_wave_leaves_the_drawing_as_drawn(brief):
+    assert steps.undulate(brief, CLIMB) is CLIMB
+
+
+def test_a_wave_keeps_every_drawn_level_and_every_flight(brief):
+    wavy = steps.undulate(WAVY, Drawing.sample())
+    for p in Drawing.sample().paths[0]:
+        assert any(abs(q[0] - p[0]) + abs(q[1] - p[1]) + abs(q[2] - p[2]) < 1e-6 for q in wavy.paths[0])
+    flights = [(s.start, s.end) for s in steps.segments(WAVY, wavy)[0] if s.risers]
+    assert flights == [(s.start, s.end) for s in steps.segments(WAVY, Drawing.sample())[0] if s.risers]
+
+
+def test_a_wave_never_passes_ramp_max(brief):
+    ramps = [s for s in steps.segments(WAVY, steps.undulate(WAVY, Drawing.sample()))[0] if not s.risers]
+    assert max(abs(s.rise) / s.run for s in ramps) <= WAVY.ramp_max + 1e-9
+
+
+def test_a_wave_is_full_where_there_is_room_and_lowered_where_not():
+    def crest(brief, drawing):
+        return max(p[2] for p in steps.undulate(brief, drawing).paths[0])
+
+    long_level = straight((0, 0, 600), (8000, 0, 600))           # 6800 between landings: one 6.8 m wave
+    assert crest(WAVY, long_level) == pytest.approx(680, abs=1)
+    short_level = straight((0, 0, 600), (3000, 0, 600))          # 1800: an 80 mm wave would pass 1:12
+    assert crest(WAVY, short_level) == pytest.approx(600 + 1800 / 12 / (2 * math.pi), abs=1)
+    at_the_limit = straight((0, 0, 0), (3600, 0, 200))           # 1:12 already: no room at all
+    assert crest(WAVY, at_the_limit) == pytest.approx(200)
+
+
+def test_a_wavy_path_is_walkable_with_no_lip(brief):
+    wavy = steps.undulate(WAVY, Drawing.sample())
+    runs = steps.segments(WAVY, wavy)
+    solid = combine(steps.host(WAVY), [steps.circulation(WAVY, wavy)])
+    counts = checks.path_clear(WAVY, runs, solid)
     assert counts["unsupported"] == 0 and counts["blocked"] == 0
 
 

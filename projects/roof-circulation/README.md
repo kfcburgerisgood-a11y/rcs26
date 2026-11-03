@@ -19,20 +19,25 @@ uv run python -m pytest projects/roof-circulation
 | `ramp_max` steepest ramp; steeper becomes stairs | the walking level at each vertex (its Z) |
 | `riser` highest step, `going_min` shallowest | |
 | `headroom` kept empty above, `support` kept solid below | |
-| `depth` solid below a path's lowest level | |
+| `depth` solid below a path's lowest level | `wave` and `wavelength`, the path's rise and fall between them |
+
+A wave obeys `ramp_max` like everything else: it is lowered wherever it would be steeper, so a level
+run takes at most about `wavelength / 75` (80 mm for a 6 m wave at 1:12).
 
 ## Steps
 
 | Function | Makes |
 |---|---|
-| `segments` | each path as runs: a ramp, or stairs with a landing `width / 2` at each end |
+| `undulate` | a wave along every level run and ramp, keeping drawn levels, landings and stairs |
+| `segments` | each path as runs: level, a ramp, or stairs; a sloping run keeps a level landing `width / 2` long where the path turns or ends, a flight at both ends |
 | `walk` | the path as solid, down to `depth` below its lowest level |
 | `clearance` | the headroom over the path, less the path |
 | `support` | the top `support` mm under the walking surface |
 | `circulation` | all three, as one `Contribution` |
 | `extent`, `export` | the box to sample, and the mesh (`.stl`) and field (`.json`) in `out/` |
 
-`checks.path_clear` walks every path on a finished solid (floor underfoot, nothing overhead), and
+`checks.path_clear` walks every path on a finished solid (floor underfoot, nothing overhead, not even a
+10 mm lip), and
 `checks.steep_stairs` lists flights too short for their rise.
 
 ## Putting modules together

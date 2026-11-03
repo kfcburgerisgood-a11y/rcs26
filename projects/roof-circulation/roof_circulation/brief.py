@@ -21,9 +21,9 @@ class Brief:
     True
     """
 
-    # the host: a stand-in roof slab, top at z = thickness
-    length: float = 12000.0
-    span: float = 6000.0
+    # the host: a stand-in roof slab, top at z = thickness, the size of the grid roof
+    length: float = 18000.0
+    span: float = 12000.0
     thickness: float = 600.0
 
     # the path
@@ -34,6 +34,12 @@ class Brief:
     going_min: float = 280.0        # shallowest a step may be
     headroom: float = 2100.0        # kept empty above the walking surface
     support: float = 300.0          # below the walking surface, no later process may remove
+
+    # the wave along level runs and ramps; lowered wherever it would pass ramp_max,
+    # so at most about ramp_max x wavelength / 6.3 on a level run: 80 mm for a 6 m wave at 1:12
+    wave: float = 0.0               # height of the wave: 0 for none
+    wavelength: float = 4000.0      # crest to crest, roughly: each run holds whole waves
+    wave_step: float = 250.0        # how finely the wave is followed
 
     # sampling
     margin: float = 200.0           # room around the model to sample
