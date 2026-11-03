@@ -1,0 +1,20 @@
+[project]
+name = "roof-circulation"
+version = "0.1.0"
+description = "One student's workflow, built on compas_vol"
+requires-python = ">=3.9"   # Rhino 8 embeds 3.9
+dependencies = [
+    "compas-vol[meshing,processes]",
+    "matplotlib>=3.9",
+]
+
+[tool.rcs26]
+owner = "kfcburgerisgood-a11y"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "roof_circulation"
+module-root = ""
