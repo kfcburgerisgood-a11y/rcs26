@@ -5,41 +5,40 @@ import numpy as np
 __all__ = ["plan", "profile", "section"]
 
 
-def plan(bounds, segments, title="paths"):
-    """The paths in plan: ramps in blue, stairs in red with a tick at every riser."""
+def plan(bounds, host, profiles, samples=200, title="paths on the host"):
+    """The paths in plan over the host's top, shaded by height; pins as dots."""
     import matplotlib.pyplot as plt
 
-    _, ax = plt.subplots(figsize=(8, 5))
-    for runs in segments:
-        for seg in runs:
-            xs, ys = [seg.start[0], seg.end[0]], [seg.start[1], seg.end[1]]
-            ax.plot(xs, ys, color="tab:red" if seg.risers else "tab:blue", lw=2)
-            (x, y, _), (ux, uy), low, _ = seg.low_end()
-            for k in range(seg.risers):
-                u = low + k * seg.going
-                ax.plot(x + ux * u, y + uy * u, "|", color="tab:red", ms=12)
-    ax.set_xlim(bounds[0], bounds[3])
-    ax.set_ylim(bounds[1], bounds[4])
+    _, ax = plt.subplots(figsize=(9, 6))
+    xs, ys = np.linspace(bounds[0], bounds[3], samples), np.linspace(bounds[1], bounds[4], samples)
+    if hasattr(host, "top"):
+        heights = host.top(xs[:, None], ys[None, :])
+        image = ax.imshow(heights.T, origin="lower", cmap="Greys", extent=(xs[0], xs[-1], ys[0], ys[-1]))
+        plt.colorbar(image, ax=ax, label="host top (mm)", shrink=0.7)
+    for p in profiles:
+        ax.plot(p.x, p.y, color="tab:blue", lw=2)
+        for a, b, level in p.holds:
+            if level is not None and a == b:
+                ax.plot(np.interp(a, p.s, p.x), np.interp(a, p.s, p.y), "o", color="tab:red")
     ax.set_aspect("equal")
     ax.set_title(title)
     return ax
 
 
-def profile(segments, title="walking level along each path"):
-    """The walking level against distance along each path: the path unrolled."""
+def profile(profiles, title="along each path"):
+    """Each path unrolled: the host's surface under it, and the level walked on."""
     import matplotlib.pyplot as plt
 
     _, ax = plt.subplots(figsize=(10, 3))
-    for runs in segments:
-        along, levels, done = [], [], 0.0
-        for seg in runs:
-            for u in np.linspace(0.0, seg.run, 40):
-                along.append(done + u)
-                levels.append(seg.level(u if seg.rise >= 0 else seg.run - u))
-            done += seg.run
-        ax.plot(along, levels)
+    for p in profiles:
+        ax.fill_between(p.s, p.ground, min(p.ground.min(), p.level.min()) - 200, color="0.85", label="host")
+        ax.plot(p.s, p.level, color="tab:blue", label="walking level")
+        for a, b, level in p.holds:
+            if level is not None and a == b:
+                ax.plot(a, level, "o", color="tab:red")
     ax.set_xlabel("along the path (mm)")
     ax.set_ylabel("level (mm)")
+    ax.legend(loc="upper left")
     ax.set_title(title)
     return ax
 
@@ -57,6 +56,6 @@ def section(bounds, solid, axis="y", at=0.0, samples=400, title=""):
     else:
         values = solid.get_distance_numpy(fixed, us[None, :, None], zs[None, None, :])[0, :, :]
     _, ax = plt.subplots(figsize=(10, 3))
-    ax.imshow((values < 0).T, origin="lower", cmap="Greys", extent=(us[0], us[-1], zs[0], zs[-1]))
+    ax.imshow((values < 0).T, origin="lower", cmap="Greys", extent=(us[0], us[-1], zs[0], zs[-1]), aspect="auto")
     ax.set_title("{} ({} = {:.0f} mm)".format(title, axis, at).strip())
     return ax

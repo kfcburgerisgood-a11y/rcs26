@@ -4,43 +4,59 @@ A step takes the brief and what earlier steps made, and returns its own result.
 Build steps from ``compas_vol.nodes`` where a component exists, and keep Rhino
 out of this package: that is what lets a step become a component later.
 
-The module is :func:`circulation`: drawn paths in, a :class:`Contribution` out,
-for any host. :func:`host` is only a stand-in roof to try it on.
+The module reads any host as a field: ``ground`` finds its surface under each
+drawn path, ``grade`` lays a walking level on it that is never steeper than
+``ramp_max``, and ``circulation`` hands back a :class:`Contribution`.
+:func:`host` is only a stand-in rocky roof to try it on.
 """
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import compas
-from compas.geometry import Frame, Plane, Polyline
+import numpy as np
+from compas.geometry import Frame, Plane
 
 from compas_vol import nodes
 from compas_vol.meshing import write_stl
 from compas_vol.primitives import VolPlane
 
 from .contribution import Contribution, combine
-from .drawing import Drawing
+from .rock import VolRock
 
 __all__ = [
-    "Segment", "host", "segments", "undulate", "walk", "clearance", "support", "circulation", "combine",
-    "extent", "export",
+    "Profile", "Segment", "host", "ground", "grade", "segments", "walk", "clearance", "support", "circulation",
+    "combine", "extent", "export",
 ]
+
+OVERLAP = 1.0   # mm: neighbouring pieces overlap this much, so the seam between them never reads as a surface
+
+
+@dataclass
+class Profile:
+    """One path, followed every ``spacing`` mm in plan: where it goes, the host under it, and the level walked on."""
+
+    s: np.ndarray           # distance along the path, in plan
+    x: np.ndarray
+    y: np.ndarray
+    ground: np.ndarray      # the host's top under the centre line
+    floor: np.ndarray       # its lowest top across the width
+    holds: list             # (from s, to s, level): ends and turns held level, and pins
+    level: np.ndarray = None
+
+    @property
+    def length(self):
+        return float(self.s[-1])
 
 
 @dataclass
 class Segment:
-    """One straight run of a path, between two drawn vertices: level, a ramp, or stairs.
-
-    A run that is not level keeps a level landing where the path turns or ends,
-    and a flight keeps one at both ends, so a turn never lands on a slope or a step.
-    """
+    """One straight piece of a path, at a single slope, built as one box."""
 
     start: tuple            # (x, y, walking level)
     end: tuple
-    risers: int = 0         # 0 for a ramp
-    flat_start: float = 0.0     # level plan length at the start
-    flat_end: float = 0.0       # and at the end
+    bottom: float           # how low its solid reaches: into the host below it
 
     @property
     def run(self):
@@ -52,204 +68,248 @@ class Segment:
         return self.end[2] - self.start[2]
 
     @property
-    def kind(self):
-        return "stairs" if self.risers else "ramp"
-
-    @property
-    def sloped(self):
-        """float: plan length between the landings."""
-        return self.run - self.flat_start - self.flat_end
-
-    @property
-    def going(self):
-        """float: plan depth of each step, for stairs; the sloped length, for a ramp."""
-        return self.sloped / self.risers if self.risers else self.sloped
-
-    def low_end(self):
-        """The lower end, the plan unit vector from it to the other end, and the landings at the low and high ends."""
-        if self.rise >= 0:
-            a, b, low, high = self.start, self.end, self.flat_start, self.flat_end
-        else:
-            a, b, low, high = self.end, self.start, self.flat_end, self.flat_start
-        return a, ((b[0] - a[0]) / self.run, (b[1] - a[1]) / self.run), low, high
-
-    def level(self, u):
-        """float: the walking level ``u`` mm in plan from the low end."""
-        (_, _, z), _, low, _ = self.low_end()
-        if self.risers:
-            k = min(max(int((u - low) // self.going), -1), self.risers - 1)
-            return float(z + (k + 1) * abs(self.rise) / self.risers)
-        return float(z + abs(self.rise) * min(max((u - low) / self.sloped, 0.0), 1.0))
+    def direction(self):
+        """The plan unit vector from start to end."""
+        return (self.end[0] - self.start[0]) / self.run, (self.end[1] - self.start[1]) / self.run
 
     def points(self, spacing):
-        """``(x, y, level)`` along the centre line: every landing's and step's middle, or every ``spacing`` mm.
+        """``(x, y, level)`` along the centre line, about every ``spacing`` mm.
 
         Examples
         --------
-        >>> Segment((0, 0, 0), (1000, 0, 300), 2, 100, 100).points(100)
-        [(50.0, 0.0, 0.0), (300.0, 0.0, 150.0), (700.0, 0.0, 300.0), (950.0, 0.0, 300.0)]
+        >>> Segment((0, 0, 0), (1000, 0, 50), -150).points(500)
+        [(250.0, 0.0, 12.5), (750.0, 0.0, 37.5)]
         """
-        (x, y, _), (ux, uy), low, high = self.low_end()
-        if self.risers:
-            us = [low / 2, self.run - high / 2] + [low + (k + 0.5) * self.going for k in range(self.risers)]
-        else:
-            count = max(2, int(self.run // spacing))
-            us = [self.run * (i + 0.5) / count for i in range(count)]
-        return [(x + ux * u, y + uy * u, self.level(u)) for u in sorted(us)]
+        (x, y, z), (ux, uy) = self.start, self.direction
+        count = max(2, int(self.run // spacing))
+        return [(x + ux * u, y + uy * u, z + self.rise * u / self.run)
+                for u in (self.run * (i + 0.5) / count for i in range(count))]
 
 
 def host(brief):
-    """A stand-in roof slab, to try the module on. *Canvas: Volumetric Box.*"""
-    centre = Frame([brief.length / 2, brief.span / 2, brief.thickness / 2], [1, 0, 0], [0, 1, 0])
-    return nodes.box(centre, brief.length, brief.span, brief.thickness, 0)
+    """A stand-in rocky roof, to try the module on. Any field will do in its place: a mesh, through VolGrid."""
+    return VolRock(brief.length, brief.span, brief.thickness, brief.roughness, brief.rock_cell, brief.rock_seed)
 
 
-def _joints(path):
-    """For each vertex, whether the path turns or ends there: where a run that is not level needs a landing."""
-    directions = []
-    for a, b in zip(path[:-1], path[1:]):
-        run = math.hypot(b[0] - a[0], b[1] - a[1])
-        if run == 0:
-            raise ValueError("A path rises straight up at {}: give it some plan length.".format(list(a)))
-        directions.append(((b[0] - a[0]) / run, (b[1] - a[1]) / run))
-    turns = [d[0] * e[0] + d[1] * e[1] < 1 - 1e-9 for d, e in zip(directions[:-1], directions[1:])]
-    return [True] + turns + [True]
+def _surface(brief, host, x, y):
+    """The host's highest surface over plan points: scanned down every ``voxel`` mm, then bisected."""
+    zs = np.arange(brief.search_top, brief.search_bottom, -brief.voxel)
+    inside = host.get_distance_numpy(x[:, None, None], y[:, None, None], zs[None, None, :])[:, 0, :] < 0
+    if not inside.any(axis=1).all():
+        i = int(np.argmin(inside.any(axis=1)))
+        raise ValueError("No host under the path at ({:.0f}, {:.0f}).".format(x[i], y[i]))
+    first = inside.argmax(axis=1)
+    lo, hi = zs[first], zs[np.maximum(first - 1, 0)]
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        below = host.get_distance_numpy(x[:, None, None], y[:, None, None], mid[:, None, None])[:, 0, 0] < 0
+        lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
+    mid = (lo + hi) / 2
+    # one step by the distance itself: exact where the field is, and never past the surface where it is a bound
+    return mid - host.get_distance_numpy(x[:, None, None], y[:, None, None], mid[:, None, None])[:, 0, 0]
 
 
-def segments(brief, drawing):
-    """Each path as its runs: a ramp up to ``ramp_max``, stairs of at most ``riser`` beyond.
+def ground(brief, host, drawing):
+    """Step 2: the host's surface under every path. *Canvas: Divide Curve, then a ray down onto the host.*
 
-    Reads ``ramp_max``, ``riser``, ``width``. A run that is not level keeps a level
-    landing ``width / 2`` long where the path turns or ends, and a flight keeps one
-    at both ends. Returns one list of :class:`Segment` per path.
+    Reads ``width``, ``spacing``, ``voxel``, ``search_top``, ``search_bottom``. Each path
+    is followed every ``spacing`` mm, and at every vertex and pin. Its ends and
+    turns are held level ``width / 2`` each way, and each pin at its Z.
+    Returns one :class:`Profile` per path, without a level yet.
+    """
+    r = brief.width / 2
+    profiles, placed = [], set()
+    for path in drawing.paths:
+        corners = np.array([[p[0], p[1]] for p in path], dtype=float)
+        legs = np.hypot(*np.diff(corners, axis=0).T)
+        if not legs.all():
+            raise ValueError("A path doubles back on itself at {}.".format(corners[1:][legs == 0][0].tolist()))
+        at = np.concatenate([[0.0], np.cumsum(legs)])
+        total = at[-1]
+        holds = [(0.0, min(r, total), None), (max(total - r, 0.0), total, None)]
+        for i in range(1, len(corners) - 1):
+            a, b = corners[i] - corners[i - 1], corners[i + 1] - corners[i]
+            if a @ b < (1 - 1e-9) * legs[i - 1] * legs[i]:
+                holds.append((at[i] - r, at[i] + r, None))
+        for k, pin in enumerate(drawing.pins):
+            s, off = _nearest(corners, at, pin)
+            if off <= r:
+                holds.append((s, s, float(pin[2])))
+                placed.add(k)
+        marks = [h[0] for h in holds] + [h[1] for h in holds] + list(at)
+        s = np.unique(np.round(np.concatenate([np.arange(0.0, total, brief.spacing), [total], marks]), 6))
+        s = s[(s >= 0) & (s <= total)]
+        x, y = np.interp(s, at, corners[:, 0]), np.interp(s, at, corners[:, 1])
+        tx, ty = np.gradient(x, s), np.gradient(y, s)
+        norm = np.hypot(tx, ty)
+        nx, ny = -ty / norm, tx / norm
+        centre = _surface(brief, host, x, y)
+        edges = [_surface(brief, host, x + sign * r * nx, y + sign * r * ny) for sign in (-1, 1)]
+        profiles.append(Profile(s, x, y, centre, np.minimum(centre, np.minimum(*edges)), holds))
+    for k, pin in enumerate(drawing.pins):
+        if k not in placed:
+            raise ValueError("The pin at ({:.0f}, {:.0f}) is not on any path.".format(pin[0], pin[1]))
+    return profiles
+
+
+def _nearest(corners, at, point):
+    """Distance along a plan polyline to its nearest point to ``point``, and how far off it ``point`` is."""
+    p = np.array([point[0], point[1]], dtype=float)
+    best = (0.0, math.inf)
+    for i, (a, b) in enumerate(zip(corners[:-1], corners[1:])):
+        d = b - a
+        t = float(np.clip((p - a) @ d / (d @ d), 0.0, 1.0))
+        off = float(np.hypot(*(a + t * d - p)))
+        if off < best[1]:
+            best = (at[i] + t * float(np.hypot(*d)), off)
+    return best
+
+
+def grade(brief, profiles):
+    """Step 3: the level walked on. Never steeper than ``ramp_max``, and never stairs.
+
+    Reads ``ramp_max``, ``smoothing``, ``wave``, ``wavelength``. The level follows
+    the ground averaged over ``smoothing`` mm, plus a wave that fades out at the
+    ends; it meets the ground at both ends, keeps every pin, and is level
+    through every turn. Where it cannot do all that at ``ramp_max``, it says
+    where, so the route can be drawn longer.
 
     Examples
     --------
     >>> from roof_circulation import Brief, Drawing
-    >>> [s.kind for s in segments(Brief(), Drawing.sample())[0]]
-    ['ramp', 'ramp', 'stairs', 'ramp', 'ramp', 'stairs', 'ramp']
+    >>> brief = Brief(roughness=0.0, wave=50.0)
+    >>> profile = grade(brief, ground(brief, host(brief), Drawing.sample()))[0]
+    >>> float(profile.level[0]), float(profile.level[-1])    # both ends on the flat roof, at 600
+    (600.0, 600.0)
+    >>> bool(np.all(np.abs(np.diff(profile.level)) <= brief.ramp_max * np.diff(profile.s) + 1e-9))
+    True
     """
-    r = brief.width / 2
+    m = brief.ramp_max
     result = []
-    for path in drawing.paths:
-        joints = _joints(path)
+    for p in profiles:
+        s, total = p.s, p.length
+        window = np.abs(s[:, None] - s[None, :]) <= brief.smoothing / 2
+        share = np.gradient(s)[None, :] * window
+        target = (share * p.ground[None, :]).sum(axis=1) / share.sum(axis=1)
+        if brief.wave:
+            fade = np.clip(np.minimum(s, total - s) / (brief.wavelength / 2), 0.0, 1.0)
+            target = target + brief.wave * np.sin(2 * math.pi * s / brief.wavelength) * fade * fade * (3 - 2 * fade)
+        # landings climb nothing: every distance below is measured in ramp only, landings taken out
+        flats = _merged([(a, b) for a, b, _ in p.holds if a < b])
+        ramp = s - sum(np.clip(s - a, 0.0, b - a) for a, b in flats)
+        held = []       # (ramp distance, level, s), each within reach of all those before it
+        order = p.holds[:2] + [h for h in p.holds[2:] if h[2] is not None] + [h for h in p.holds[2:] if h[2] is None]
+        for k, (a, b, level) in enumerate(order):
+            if k < 2:   # the ends: on the ground
+                level = float(p.ground[0] if k == 0 else p.ground[-1])
+            here = (a + b) / 2
+            r = float(np.interp(here, s, ramp))
+            reach = [(c, m * abs(r - c[0])) for c in held]
+            if level is None:
+                lo = max([c[1] - d for c, d in reach] + [-math.inf])
+                hi = min([c[1] + d for c, d in reach] + [math.inf])
+                level = float(np.clip(np.interp(here, s, target), lo, hi))
+            for c, d in reach:
+                if abs(level - c[1]) > d + 1e-6:
+                    raise ValueError(_too_steep(p, (here, r, level), (c[2], c[0], c[1]), m))
+            held.append((r, level, here))
+        lo = np.max([h - m * np.abs(ramp - r) for r, h, _ in held], axis=0)
+        hi = np.min([h + m * np.abs(ramp - r) for r, h, _ in held], axis=0)
+        z = np.clip(target, lo, hi)
+        apart = m * np.abs(ramp[:, None] - ramp[None, :])
+        z = ((z[None, :] + apart).min(axis=1) + (z[None, :] - apart).max(axis=1)) / 2
+        result.append(replace(p, level=z))
+    return result
+
+
+def _merged(spans):
+    """Overlapping ``(from, to)`` spans joined."""
+    result = []
+    for a, b in sorted(spans):
+        if result and a <= result[-1][1]:
+            result[-1] = (result[-1][0], max(result[-1][1], b))
+        else:
+            result.append((a, b))
+    return result
+
+
+def _too_steep(p, one, other, m):
+    """Where the route is too short to climb at ``m``, in words a designer can act on."""
+    (sa, ra, ha), (sb, rb, hb) = sorted([one, other])
+    xa, ya, xb, yb = (float(np.interp(v, p.s, c)) for v, c in ((sa, p.x), (sa, p.y), (sb, p.x), (sb, p.y)))
+    return ("Too steep for 1:{:.0f} from ({:.0f}, {:.0f}) at {:.0f} to ({:.0f}, {:.0f}) at {:.0f}: "
+            "a rise of {:.0f} mm needs {:.0f} mm of ramp, and the route has {:.0f} between its landings. "
+            "Draw it longer there.").format(1 / m, xa, ya, ha, xb, yb, hb, abs(hb - ha), abs(hb - ha) / m, abs(rb - ra))
+
+
+def segments(brief, profiles):
+    """Each graded path as straight pieces, one per slope, each reaching ``depth`` into the host below it.
+
+    Reads ``depth``. Returns one list of :class:`Segment` per path.
+    """
+    result = []
+    for p in profiles:
         runs = []
-        for i, (a, b) in enumerate(zip(path[:-1], path[1:])):
-            seg = Segment(tuple(a), tuple(b))
-            if seg.rise:
-                seg.flat_start, seg.flat_end = (r if joints[i] else 0.0), (r if joints[i + 1] else 0.0)
-                if abs(seg.rise) > brief.ramp_max * seg.sloped:
-                    seg.risers = int(math.ceil(abs(seg.rise) / brief.riser))
-                    seg.flat_start = seg.flat_end = r
-                if seg.sloped <= 0:
-                    raise ValueError("The run from {} to {} is too short for its landings.".format(list(a), list(b)))
-            runs.append(seg)
+        for i in range(len(p.s) - 1):
+            bottom = min(p.floor[i], p.floor[i + 1]) - brief.depth
+            seg = Segment((p.x[i], p.y[i], p.level[i]), (p.x[i + 1], p.y[i + 1], p.level[i + 1]), bottom)
+            last = runs[-1] if runs else None
+            if last and _same_line(last, seg):
+                runs[-1] = Segment(last.start, seg.end, min(last.bottom, bottom))
+            else:
+                runs.append(seg)
         result.append(runs)
     return result
 
 
-def undulate(brief, drawing):
-    """A wave along every level run and ramp, ``wave`` high and about ``wavelength`` long. *Canvas: Divide Curve.*
+def _straight(a, b):
+    """Whether the path keeps its direction in plan from piece ``a`` to piece ``b``."""
+    (ax, ay), (bx, by) = a.direction, b.direction
+    return ax * bx + ay * by > 1 - 1e-9
 
-    Reads ``wave``, ``wavelength``, ``wave_step``, ``ramp_max``, ``width``. Stairs,
-    landings and every drawn level stay as drawn: each run holds a whole number of
-    waves between its landings. Where the full ``wave`` would make a run steeper than
-    ``ramp_max``, that run's wave is lowered until it is not, so the wave never makes
-    stairs. Returns a new :class:`Drawing`; ``wave = 0`` returns the drawing itself.
 
-    Examples
-    --------
-    >>> from roof_circulation import Brief, Drawing
-    >>> level = Drawing([Polyline([[0, 0, 600], [8000, 0, 600]])])
-    >>> wavy = undulate(Brief(wave=50.0, wavelength=6800.0), level).paths[0]
-    >>> wavy[0][2], wavy[-1][2], round(max(p[2] for p in wavy))
-    (600.0, 600.0, 650)
-    """
-    if not brief.wave:
-        return drawing
-    r = brief.width / 2
-    paths = []
-    for path, runs in zip(drawing.paths, segments(brief, drawing)):
-        joints = _joints(path)
-        points = [list(path[0])]
-        for i, seg in enumerate(runs):
-            u0, u1 = (r if joints[i] else 0.0), seg.run - (r if joints[i + 1] else 0.0)
-            length = u1 - u0
-            if seg.risers or length <= 0:
-                points.append(list(seg.end))
-                continue
-            waves = max(1, int(round(length / brief.wavelength)))
-            room = max(brief.ramp_max - abs(seg.rise) / length, 0.0)
-            height = min(brief.wave, room * length / (2 * math.pi * waves))
-            count = max(2, int(math.ceil(length / brief.wave_step)))
-            (sx, sy, sz), (ex, ey, _) = seg.start, seg.end
-            ux, uy = (ex - sx) / seg.run, (ey - sy) / seg.run
-            for j in range(0 if u0 > 0 else 1, count + 1):
-                t = j / count
-                z = sz + seg.rise * t + height * math.sin(2 * math.pi * waves * t)
-                points.append([sx + ux * (u0 + length * t), sy + uy * (u0 + length * t), z])
-            if u1 < seg.run:
-                points.append(list(seg.end))
-        paths.append(Polyline(points))
-    return Drawing(paths)
+def _same_line(a, b):
+    """Whether two pieces continue each other: one direction in plan, one slope."""
+    return _straight(a, b) and abs(a.rise / a.run - b.rise / b.run) < 1e-9
 
 
 def _band(brief, runs, below, above):
-    """The solid from ``below`` under the walking surface to ``above`` over it, ``width`` wide."""
+    """The solid from ``below`` under the walking surface (or down to each piece's bottom) to ``above`` over it."""
     parts = []
     for seg in runs:
-        (x, y, z), (ux, uy), low, high = seg.low_end()
-        across = [-uy, ux, 0]
-        top = z + abs(seg.rise)
-        # level pieces, as (middle, plan length, level): the landings, and each step
-        flats = [(low / 2, low, z), (seg.run - high / 2, high, top)]
-        flats += [(low + (k + 0.5) * seg.going, seg.going, z + (k + 1) * abs(seg.rise) / seg.risers)
-                  for k in range(seg.risers)]
-        for u, length, level in flats:
-            if length > 0:
-                frame = Frame([x + ux * u, y + uy * u, level + (above - below) / 2], [ux, uy, 0], across)
-                parts.append(nodes.box(frame, length, brief.width, below + above, 0))
-        if not seg.risers:
-            # the slope between the landings: a plan box, cut above and below by planes parallel to it
-            x0, y0 = x + ux * low, y + uy * low
-            lo, hi = z - below, top + above
-            frame = Frame([x0 + ux * seg.sloped / 2, y0 + uy * seg.sloped / 2, (lo + hi) / 2], [ux, uy, 0], across)
-            slope = abs(seg.rise) / seg.sloped
-            up = [-ux * slope, -uy * slope, 1]
-            down = [-v for v in up]
-            parts.append(nodes.boolean([
-                nodes.box(frame, seg.sloped, brief.width, hi - lo, 0),
-                VolPlane(Plane([x0, y0, z + above], up)),
-                VolPlane(Plane([x0, y0, z - below], down)),
-            ], "intersection", 0))
-    # a round joint where the path turns or ends: every run is level within width / 2 of one
-    path = [runs[0].start] + [seg.end for seg in runs]
-    for (x, y, z), joint in zip(path, _joints(path)):
-        if joint:
-            frame = Frame([x, y, z + (above - below) / 2], [1, 0, 0], [0, 1, 0])
-            parts.append(nodes.cylinder(frame, brief.width / 2, below + above))
+        (x, y, z), (ux, uy) = seg.start, seg.direction
+        slope = seg.rise / seg.run
+        up = [-ux * slope, -uy * slope, 1]
+        if below is None:   # down to a level bottom, in the host
+            lo, underside = seg.bottom, VolPlane(Plane([x, y, seg.bottom], [0, 0, -1]))
+        else:               # a band of even depth under the walking surface
+            lo, underside = min(seg.start[2], seg.end[2]) - below, VolPlane(Plane([x, y, z - below], [-v for v in up]))
+        hi = max(seg.start[2], seg.end[2]) + above
+        frame = Frame([x + ux * seg.run / 2, y + uy * seg.run / 2, (lo + hi) / 2], [ux, uy, 0], [-uy, ux, 0])
+        parts.append(nodes.boolean([
+            nodes.box(frame, seg.run + 2 * OVERLAP, brief.width, hi - lo, 0),
+            VolPlane(Plane([x, y, z + above], up)),
+            underside,
+        ], "intersection", 0))
+    # a round joint where the path turns or ends; the grade holds it level width / 2 each way
+    for i in range(len(runs) + 1):
+        touching = runs[max(i - 1, 0):i + 1]
+        if len(touching) == 2 and _straight(*touching):
+            continue
+        x, y, z = runs[i].start if i < len(runs) else runs[-1].end
+        down = z - min(t.bottom for t in touching) if below is None else below
+        frame = Frame([x, y, z + (above - down) / 2], [1, 0, 0], [0, 1, 0])
+        parts.append(nodes.cylinder(frame, brief.width / 2, down + above))
     return nodes.boolean(parts, "union", 0)
 
 
 def walk(brief, segments):
-    """The path as solid, down to ``depth`` below its lowest level. *Canvas: Volumetric Boolean.*
-
-    Reads ``width``, ``depth``. Raised parts stand on solid, so no path floats.
-    """
-    solids = []
-    for runs in segments:
-        levels = [z for seg in runs for z in (seg.start[2], seg.end[2])]
-        floor = min(levels) - brief.depth
-        band = _band(brief, runs, max(levels) - floor, 0.0)
-        solids.append(nodes.boolean([band, VolPlane(Plane([0, 0, floor], [0, 0, -1]))], "intersection", 0))
-    return nodes.boolean(solids, "union", 0)
+    """The path as solid, from its walking surface down into the host. *Canvas: Volumetric Boolean.*"""
+    return nodes.boolean([_band(brief, runs, None, 0.0) for runs in segments], "union", 0)
 
 
 def clearance(brief, segments, walk):
-    """The space kept empty over the path, ``headroom`` high, less the path itself.
-
-    Reads ``width``, ``headroom``.
-    """
+    """The space kept empty over the path, ``headroom`` high, less the path itself: where it cuts into the host."""
     space = nodes.boolean([_band(brief, runs, 0.0, brief.headroom) for runs in segments], "union", 0)
     return nodes.boolean([space, walk], "difference", 0)
 
@@ -259,33 +319,37 @@ def support(brief, segments):
     return nodes.boolean([_band(brief, runs, brief.support, 0.0) for runs in segments], "union", 0)
 
 
-def circulation(brief, drawing):
-    """The module: drawn paths in, a :class:`Contribution` out, for any host.
+def circulation(brief, segments):
+    """The module's result, for any host: a :class:`Contribution`.
 
     Examples
     --------
     >>> from roof_circulation import Brief, Drawing
-    >>> brief = Brief()
-    >>> part = circulation(brief, Drawing.sample())
-    >>> round(part.add.get_distance([14000, 7000, 1650]), 3)   # 100 mm over the terrace, at 1550
+    >>> brief = Brief(roughness=0.0)
+    >>> runs = segments(brief, grade(brief, ground(brief, host(brief), Drawing.sample())))
+    >>> part = circulation(brief, runs)
+    >>> round(part.add.get_distance([5000, 2000, 700]), 3)     # 100 mm over the path, on the flat roof at 600
     100.0
-    >>> part.cut.get_distance([14000, 7000, 2550]) < 0        # a metre above it
+    >>> part.cut.get_distance([5000, 2000, 1600]) < 0         # a metre above it
     True
     """
-    runs = segments(brief, drawing)
-    solid = walk(brief, runs)
-    return Contribution(add=solid, cut=clearance(brief, runs, solid), keep=support(brief, runs))
+    solid = walk(brief, segments)
+    return Contribution(add=solid, cut=clearance(brief, segments, solid), keep=support(brief, segments))
 
 
-def extent(brief, drawing):
-    """The box to sample: the host and every path, ``margin`` around. ``(xmin, ymin, zmin, xmax, ymax, zmax)``."""
-    points = [p for path in drawing.paths for p in path]
+def extent(brief, profiles):
+    """The box to sample: the host and every path, ``margin`` around. ``(xmin, ymin, zmin, xmax, ymax, zmax)``.
+
+    Before the grade, the paths are taken at the ground's height.
+    """
     r = brief.width / 2
-    lo = [min([0.0] + [p[0] - r for p in points]), min([0.0] + [p[1] - r for p in points]),
-          min([0.0] + [p[2] - brief.depth for p in points])]
-    hi = [max([brief.length] + [p[0] + r for p in points]), max([brief.span] + [p[1] + r for p in points]),
-          max([brief.thickness] + [p[2] for p in points])]
-    return tuple(v - brief.margin for v in lo) + tuple(v + brief.margin for v in hi)
+    xs = np.concatenate([[0.0, brief.length]] + [np.concatenate([p.x - r, p.x + r]) for p in profiles])
+    ys = np.concatenate([[0.0, brief.span]] + [np.concatenate([p.y - r, p.y + r]) for p in profiles])
+    zs = np.concatenate([[0.0, brief.thickness + brief.roughness]] +
+                        [np.concatenate([p.floor - brief.depth, p.ground if p.level is None else p.level])
+                         for p in profiles])
+    lo, hi = (xs.min(), ys.min(), zs.min()), (xs.max(), ys.max(), zs.max())
+    return tuple(float(v) - brief.margin for v in lo) + tuple(float(v) + brief.margin for v in hi)
 
 
 def export(brief, solid, bounds, stem):

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 import compas
-from compas.geometry import Polyline
+from compas.geometry import Point, Polyline
 
 __all__ = ["Drawing"]
 
@@ -15,27 +15,31 @@ class Drawing:
     Attributes
     ----------
     paths : list[:class:`compas.geometry.Polyline`]
-        Centre lines of the paths, in world coordinates. Each vertex's Z is
-        the walking level there; between vertices the level ramps, or steps
-        where a ramp would be too steep.
+        Centre lines of the paths, in plan: their Z is ignored. The level
+        follows the host's surface.
+    pins : list[:class:`compas.geometry.Point`]
+        Levels held where they are drawn: a lookout, a bridge. Each sits on a
+        path, within half its width, and its Z is the level there.
 
     Examples
     --------
     >>> drawing = Drawing.sample()
-    >>> len(drawing.paths), len(drawing.paths[0])
-    (1, 8)
-    >>> Drawing.from_data(compas.json_loads(compas.json_dumps(drawing.to_data()))).paths[0][1] == drawing.paths[0][1]
-    True
+    >>> len(drawing.paths), len(drawing.paths[0]), len(drawing.pins)
+    (1, 6, 1)
+    >>> again = Drawing.from_data(compas.json_loads(compas.json_dumps(drawing.to_data())))
+    >>> again.paths[0][1] == drawing.paths[0][1], again.pins[0] == drawing.pins[0]
+    (True, True)
     """
 
     paths: list = field(default_factory=list)
+    pins: list = field(default_factory=list)
 
     def to_data(self):
-        return {"paths": self.paths}
+        return {"paths": self.paths, "pins": self.pins}
 
     @classmethod
     def from_data(cls, data):
-        return cls([Polyline(p) for p in data.get("paths", [])])
+        return cls([Polyline(p) for p in data.get("paths", [])], [Point(*p) for p in data.get("pins", [])])
 
     def save(self, path):
         compas.json_dump(self.to_data(), path, pretty=True)
@@ -47,12 +51,9 @@ class Drawing:
 
     @classmethod
     def sample(cls):
-        """A path over the stand-in roof that rises and falls.
-
-        A long level stretch on the deck (at 600), a ramp up, stairs up to a terrace,
-        a ramp down, then stairs down to 200 mm below the deck, ending in the trench it cuts.
-        """
-        return cls([Polyline([
-            [1000, 2000, 600], [9000, 2000, 600], [14000, 2000, 950], [14000, 5500, 1550], [14000, 9000, 1550],
-            [8000, 9000, 1200], [8000, 6000, 400], [3000, 6000, 400],
-        ])])
+        """A walk over the stand-in rock: along it, round a corner, up to a lookout held at 1300, and back."""
+        return cls(
+            [Polyline([[1500, 2000, 0], [9000, 2000, 0], [14500, 3500, 0], [14500, 9500, 0], [7000, 9500, 0],
+                       [3000, 6500, 0]])],
+            [Point(14500, 9500, 1300)],
+        )

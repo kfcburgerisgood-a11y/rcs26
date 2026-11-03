@@ -1,11 +1,20 @@
 """The rules, measured. Each one is kept by a step and checked here."""
 
-__all__ = ["steep_stairs", "path_clear"]
+import numpy as np
+
+__all__ = ["steepest", "cut_and_fill", "path_clear"]
 
 
-def steep_stairs(brief, segments):
-    """Stairs whose steps come out shallower than ``going_min``: the drawn run is too short for the rise."""
-    return [seg for runs in segments for seg in runs if seg.risers and seg.going < brief.going_min]
+def steepest(segments):
+    """The steepest slope on any path: never more than ``ramp_max``, since there are no stairs."""
+    return max(abs(seg.rise) / seg.run for runs in segments for seg in runs)
+
+
+def cut_and_fill(profiles):
+    """How far the path goes below the host's surface (cut) and above it (fill), at most, in mm."""
+    cut = max(float(np.max(p.ground - p.level)) for p in profiles)
+    fill = max(float(np.max(p.level - p.ground)) for p in profiles)
+    return {"cut": max(cut, 0.0), "fill": max(fill, 0.0)}
 
 
 def path_clear(brief, segments, solid, spacing=250.0, inset=50.0, toe=10.0):
@@ -20,7 +29,7 @@ def path_clear(brief, segments, solid, spacing=250.0, inset=50.0, toe=10.0):
     counts = {"samples": 0, "unsupported": 0, "blocked": 0}
     for runs in segments:
         for seg in runs:
-            _, (ux, uy), _, _ = seg.low_end()
+            ux, uy = seg.direction
             for x, y, z in seg.points(spacing):
                 for o in offsets:
                     px, py = x - uy * o, y + ux * o
