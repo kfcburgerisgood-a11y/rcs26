@@ -51,7 +51,10 @@ class Brief:
     # reading the roof, and finding routes over it
     cell: float = 250.0             # plan grid for the slope map and the route search
     avoid_slope: float = 4.0        # how strongly a route avoids climbing: 0 goes straight
-    route_tolerance: float = 300.0  # how far a route may stray from the way found when it is simplified
+    turns: int = 0                  # how many times a route swings side to side between stops: 0 for none
+    route_tolerance: float = 300.0  # where a winding line will not fit, how far a straightened one may stray
+    branches: int = 3               # how many ends a network grows to from its entrances
+    edge_clearance: float = 1500.0  # how far every path end keeps from the roof's edge and its holes
 
     # where to look for the host's surface, and how to sample it
     search_top: float = 6000.0      # above any roof

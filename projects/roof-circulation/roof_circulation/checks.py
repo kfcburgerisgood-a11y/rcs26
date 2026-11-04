@@ -26,17 +26,15 @@ def path_clear(brief, segments, solid, spacing=250.0, inset=50.0, toe=10.0):
     zero of each, whatever the other modules added.
     """
     offsets = (0.0, brief.width / 2 - inset, inset - brief.width / 2)
-    counts = {"samples": 0, "unsupported": 0, "blocked": 0}
+    samples = []
     for runs in segments:
         for seg in runs:
             ux, uy = seg.direction
-            for x, y, z in seg.points(spacing):
-                for o in offsets:
-                    px, py = x - uy * o, y + ux * o
-                    counts["samples"] += 1
-                    if solid.get_distance([px, py, z - inset]) >= 0:
-                        counts["unsupported"] += 1
-                    if any(solid.get_distance([px, py, z + h]) <= 0
-                           for h in (toe, brief.headroom / 2, brief.headroom - inset)):
-                        counts["blocked"] += 1
-    return counts
+            samples += [(x - uy * o, y + ux * o, z) for x, y, z in seg.points(spacing) for o in offsets]
+    x, y, z = np.array(samples).T
+
+    def solid_at(height):   # every sample at once: one array, not a call per point
+        return solid.get_distance_numpy(x[:, None, None], y[:, None, None], (z + height)[:, None, None])[:, 0, 0]
+
+    blocked = np.any([solid_at(h) <= 0 for h in (toe, brief.headroom / 2, brief.headroom - inset)], axis=0)
+    return {"samples": len(samples), "unsupported": int(np.sum(solid_at(-inset) >= 0)), "blocked": int(blocked.sum())}

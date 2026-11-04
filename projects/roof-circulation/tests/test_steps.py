@@ -11,6 +11,7 @@ from compas_vol import nodes
 from compas_vol.meshing import is_watertight
 from compas_vol.primitives import VolPlane
 from roof_circulation import Brief, Contribution, Drawing, checks, combine, steps
+from roof_circulation.routing import _tips
 
 FLAT = Brief(roughness=0.0)             # the roof's top at 600 everywhere: levels are known
 ROCK = Brief()
@@ -47,9 +48,9 @@ def test_a_brief_never_allows_a_ramp_steeper_than_1_in_12():
 SMALL = Brief(length=4000.0, span=3000.0)
 
 
-def tilted(slope):
+def tilted(slope, length=4000.0, span=3000.0):
     """A roof whose top rises along X at ``slope``: 600 at x = 0."""
-    block = nodes.box(Frame([2000, 1500, 1500], [1, 0, 0], [0, 1, 0]), 4000.0, 3000.0, 3000.0, 0)
+    block = nodes.box(Frame([length / 2, span / 2, 1500], [1, 0, 0], [0, 1, 0]), length, span, 3000.0, 0)
     return nodes.boolean([block, VolPlane(Plane([0, 0, 600], [-slope, 0, 1]))], "intersection", 0)
 
 
@@ -96,10 +97,11 @@ def test_a_route_keeps_every_stop_as_a_corner():
 
 
 def test_a_route_up_a_steep_slope_goes_across_it():
-    found = steps.route(SMALL, steps.slopes(SMALL, tilted(1 / 8)), stops((700, 1500), (3300, 1500)))
+    wide = Brief(length=8000.0, span=6000.0)                            # room to wind on
+    found = steps.route(wide, steps.slopes(wide, tilted(1 / 8, 8000.0, 6000.0)), stops((700, 3000), (7300, 3000)))
     path = found.paths[0]
-    assert length(path) > 1.2 * 2600                                    # not straight up the 1:8
-    assert (3300 - 700) / 8 / length(path) < 1 / 8                     # so it climbs gentler on the way
+    assert length(path) > 1.2 * 6600                                    # not straight up the 1:8
+    assert 6600 / 8 / length(path) < 1 / 8                             # so it climbs gentler on the way
 
 
 def test_a_route_goes_round_a_hole_with_room_for_the_path():
@@ -145,6 +147,149 @@ def test_a_sharp_turn_is_level_as_far_as_its_arms_overlap():
 def test_a_path_turning_straight_back_is_refused():
     with pytest.raises(ValueError, match="turns back on itself"):
         build(FLAT, Drawing([Polyline([[1000, 2000, 0], [9000, 2000, 0], [2000, 2600, 0]])]))
+
+
+def grow(brief, entrances=((1500, 2000),), roof=None):
+    roof = roof if roof is not None else steps.host(brief)
+    drawing = Drawing(entrances=[Point(x, y, 0) for x, y in entrances])
+    return roof, steps.network(brief, roof, steps.slopes(brief, roof), drawing)
+
+
+@pytest.mark.parametrize("count", [1, 2, 5])
+def test_a_network_grows_as_many_branches_as_asked(count):
+    _, grown = grow(Brief(roughness=0.0, branches=count))
+    assert len(_tips(grown.paths, grown.entrances)) == count
+
+
+@pytest.mark.parametrize("brief", [Brief(roughness=0.0, branches=5), Brief(branches=5)], ids=["flat", "rock"])
+def test_every_branch_ends_clear_of_the_roofs_edge(brief):
+    _, grown = grow(brief)
+    for x, y in _tips(grown.paths, grown.entrances):
+        assert min(x, y, brief.length - x, brief.span - y) >= brief.edge_clearance - brief.cell / 2
+
+
+def test_a_network_is_one_walk_from_its_entrance_split_at_every_fork():
+    _, grown = grow(Brief(branches=5))
+    ends = [(round(p[0], 3), round(p[1], 3)) for path in grown.paths for p in (path[0], path[-1])]
+    reached, frontier = set(), {(1500.0, 2000.0)}
+    while frontier:                                                      # walk the pieces from the entrance
+        point = frontier.pop()
+        reached.add(point)
+        for path in grown.paths:
+            a, b = (round(path[0][0], 3), round(path[0][1], 3)), (round(path[-1][0], 3), round(path[-1][1], 3))
+            for here, there in ((a, b), (b, a)):
+                if here == point and there not in reached:
+                    frontier.add(there)
+    assert set(ends) <= reached
+    for e in set(ends):                                                 # split at every fork: no piece runs on
+        for path in grown.paths:                                        # through another's end
+            inner = [(round(p[0], 3), round(p[1], 3)) for p in list(path)[1:-1]]
+            assert e not in inner
+
+
+def test_a_grown_network_can_be_walked_on_the_rock():
+    brief = Brief(wave=60.0, branches=5)
+    roof, grown = grow(brief)
+    _, profiles, runs = build(brief, grown)
+    counts = checks.path_clear(brief, runs, combine(roof, [steps.circulation(brief, runs)]))
+    assert counts["samples"] > 0 and counts["unsupported"] == 0 and counts["blocked"] == 0
+    assert checks.steepest(runs) <= brief.ramp_max + 1e-9
+
+
+def test_a_network_needs_an_entrance():
+    brief = Brief(roughness=0.0)
+    roof = steps.host(brief)
+    with pytest.raises(ValueError, match="at least one entrance"):
+        steps.network(brief, roof, steps.slopes(brief, roof), Drawing())
+
+
+def test_a_network_on_ground_too_steep_everywhere_says_so():
+    with pytest.raises(ValueError, match="Nowhere to end a branch"):
+        grow(SMALL, entrances=((700, 1500),), roof=tilted(1 / 8))
+
+
+def test_paths_meeting_at_a_sharp_angle_are_level_as_far_as_they_overlap():
+    trunk, branch = [[1000, 2000, 0], [8000, 2000, 0]], [[8000, 2000, 0], [2000, 5000, 0]]
+    _, profiles, _ = build(FLAT, Drawing([Polyline(trunk), Polyline(branch)]))
+    between = math.atan2(3000, 6000)                                    # the two leave the fork 26.6 degrees apart
+    reach = FLAT.width / 2 / math.tan(between / 2)
+    assert profiles[1].holds[0][1] == pytest.approx(reach)              # the branch's end at the fork
+    assert profiles[0].holds[1][1] - profiles[0].holds[1][0] == pytest.approx(reach)
+
+
+def test_paths_leaving_a_point_almost_together_are_refused():
+    trunk, branch = [[1000, 2000, 0], [8000, 2000, 0]], [[8000, 2000, 0], [2000, 3000, 0]]
+    with pytest.raises(ValueError, match="leave"):
+        build(FLAT, Drawing([Polyline(trunk), Polyline(branch)]))
+
+
+def turning(path):
+    """How far a path turns in all, left and right, in degrees."""
+    line = np.array([[p[0], p[1]] for p in path])
+    heading = np.arctan2(*np.diff(line, axis=0).T[::-1])
+    return math.degrees(np.abs((np.diff(heading) + math.pi) % (2 * math.pi) - math.pi).sum())
+
+
+def crossing(brief):
+    roof = steps.host(brief)
+    return roof, steps.route(brief, steps.slopes(brief, roof), Drawing.sample_crossing())
+
+
+def aside(path, a=(1500, 1500), b=(16500, 10500)):
+    """How far each point of a path is from the straight line ``a`` to ``b``."""
+    length = math.hypot(b[0] - a[0], b[1] - a[1])
+    return np.array([abs((p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])) / length for p in path])
+
+
+def test_with_no_turns_a_route_over_a_flat_roof_is_straight():
+    path = crossing(Brief(roughness=0.0, turns=0))[1].paths[0]
+    assert aside(path).max() <= Brief().cell                             # to within the grid it is found on
+
+
+def test_more_turns_wind_more():
+    turned = [turning(crossing(Brief(roughness=0.0, turns=n))[1].paths[0]) for n in (0, 2, 4)]
+    assert turned[0] < turned[1] < turned[2]
+
+
+def test_a_route_swings_to_one_side_and_back_but_keeps_its_stops():
+    path = crossing(Brief(roughness=0.0, turns=1))[1].paths[0]
+    length = math.hypot(15000, 9000)
+    assert aside(path).max() > length / 2 / 4                           # it swings out a good part of the way
+    assert list(path[0])[:2] == [1500, 1500] and list(path[-1])[:2] == [16500, 10500]
+
+
+def test_a_winding_crossing_can_be_walked_on_the_rock():
+    brief = Brief(wave=60.0, turns=4)
+    roof, drawing = crossing(brief)
+    _, profiles, runs = build(brief, drawing)
+    counts = checks.path_clear(brief, runs, combine(roof, [steps.circulation(brief, runs)]))
+    assert counts["samples"] > 0 and counts["unsupported"] == 0 and counts["blocked"] == 0
+    assert checks.steepest(runs) <= brief.ramp_max + 1e-9
+
+
+def test_a_branch_winds_over_the_rock_rather_than_run_straight():
+    _, grown = grow(Brief(branches=1))
+    line = np.array([[p[0], p[1]] for p in grown.paths[0]])
+    heading = np.arctan2(*np.diff(line, axis=0).T[::-1])
+    turning = np.abs((np.diff(heading) + math.pi) % (2 * math.pi) - math.pi).sum()
+    assert len(line) > 20 and math.degrees(turning) > 60
+
+
+@pytest.mark.parametrize("bend, landing", [(6, False), (12, True)])
+def test_a_gentle_bend_climbs_on_and_a_sharper_one_is_a_landing(bend, landing):
+    turn = math.radians(bend)
+    corner = (7000, 2000)
+    path = [[1000, 2000, 0], [*corner, 0], [corner[0] + 5000 * math.cos(turn), corner[1] + 5000 * math.sin(turn), 0]]
+    _, profiles, _ = build(FLAT, Drawing([Polyline(path)]))
+    assert (len(profiles[0].holds) > 2) == landing                      # beyond the two ends
+
+
+def test_a_path_is_followed_all_the_way_to_its_end():
+    # 5830.951894845... mm long: rounding the last sample up must not drop it
+    _, profiles, _ = build(FLAT, straight(start=(1000, 2000), end=(6000, 5000)))
+    p = profiles[0]
+    assert (p.x[-1], p.y[-1]) == pytest.approx((6000, 5000))
+    assert p.length == pytest.approx(math.hypot(5000, 3000))
 
 
 def test_the_ground_is_found_where_the_host_is():

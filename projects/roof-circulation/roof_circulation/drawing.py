@@ -23,6 +23,9 @@ class Drawing:
     stops : list[:class:`compas.geometry.Polyline`]
         Routes to find rather than draw: each from its first point, through
         the others in order, to its last. ``route`` turns each into a path.
+    entrances : list[:class:`compas.geometry.Point`]
+        Where people come onto the roof. ``network`` grows branching paths
+        from them over the gentle ground.
 
     Examples
     --------
@@ -37,9 +40,10 @@ class Drawing:
     paths: list = field(default_factory=list)
     pins: list = field(default_factory=list)
     stops: list = field(default_factory=list)
+    entrances: list = field(default_factory=list)
 
     def to_data(self):
-        return {"paths": self.paths, "pins": self.pins, "stops": self.stops}
+        return {"paths": self.paths, "pins": self.pins, "stops": self.stops, "entrances": self.entrances}
 
     @classmethod
     def from_data(cls, data):
@@ -47,6 +51,7 @@ class Drawing:
             [Polyline(p) for p in data.get("paths", [])],
             [Point(*p) for p in data.get("pins", [])],
             [Polyline(p) for p in data.get("stops", [])],
+            [Point(*p) for p in data.get("entrances", [])],
         )
 
     def save(self, path):
@@ -73,3 +78,13 @@ class Drawing:
             pins=[Point(14500, 9500, 1300)],
             stops=[Polyline([[1500, 2000, 0], [14500, 9500, 0], [3000, 6500, 0]])],
         )
+
+    @classmethod
+    def sample_crossing(cls):
+        """A way across the stand-in rock, from one corner to the other."""
+        return cls(stops=[Polyline([[1500, 1500, 0], [16500, 10500, 0]])])
+
+    @classmethod
+    def sample_entrance(cls):
+        """One way onto the stand-in rock, for a network to grow from."""
+        return cls(entrances=[Point(1500, 2000, 0)])

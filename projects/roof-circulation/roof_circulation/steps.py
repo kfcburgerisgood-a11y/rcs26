@@ -24,15 +24,18 @@ from compas_vol.primitives import VolPlane
 
 from .contribution import Contribution, combine
 from .rock import VolRock
-from .routing import route
+from .routing import network, route
 
 __all__ = [
-    "Profile", "Segment", "SlopeMap", "host", "slopes", "route", "ground", "grade", "segments", "walk", "clearance",
-    "support", "circulation", "combine", "extent", "export",
+    "Profile", "Segment", "SlopeMap", "host", "slopes", "route", "network", "ground", "grade", "segments", "walk",
+    "clearance", "support", "circulation", "combine", "extent", "export",
 ]
 
 OVERLAP = 1.0   # mm: neighbouring pieces overlap this much, so the seam between them never reads as a surface
 SHARPEST = 160  # degrees: a sharper turn doubles back, and its two arms would lie on each other
+GENTLE = 8      # degrees: a bend this gentle climbs on as it turns; a sharper one is a level landing.
+# A sloping path is level across, so a bend leaves a step on its inside of slope x width / 2 x sin(bend):
+# at 8 degrees and 1:12, about 7 mm on a 1200 path, under the 10 mm path_clear allows.
 
 
 @dataclass
@@ -158,24 +161,28 @@ def ground(brief, host, drawing):
 
     Reads ``width``, ``spacing``, ``voxel``, ``search_top``, ``search_bottom``. Each path
     is followed every ``spacing`` mm, and at every vertex and pin. Its ends and
-    turns are held level ``width / 2`` each way, further at a sharp turn, where the
-    two arms overlap: ``width / 2 x tan(turn / 2)``. Each pin is held at its Z.
+    turns sharper than ``GENTLE`` are held level ``width / 2`` each way, further at a
+    sharp turn, where the two arms overlap: ``width / 2 x tan(turn / 2)``; a gentler
+    bend climbs on as it turns. Where paths meet at an end, they are held level
+    as far as each overlaps the most acute of the others. Each pin is held at its Z.
     Returns one :class:`Profile` per path, without a level yet.
     """
     r = brief.width / 2
     profiles, placed = [], set()
-    for path in drawing.paths:
+    arms = _arms(drawing.paths)
+    for n, path in enumerate(drawing.paths):
         corners = np.array([[p[0], p[1]] for p in path], dtype=float)
         legs = np.hypot(*np.diff(corners, axis=0).T)
         if not legs.all():
             raise ValueError("A path doubles back on itself at {}.".format(corners[1:][legs == 0][0].tolist()))
         at = np.concatenate([[0.0], np.cumsum(legs)])
         total = at[-1]
-        holds = [(0.0, min(r, total), None), (max(total - r, 0.0), total, None)]
+        first, last = _end_reach(r, arms, n, 0, path[0]), _end_reach(r, arms, n, -1, path[-1])
+        holds = [(0.0, min(first, total), None), (max(total - last, 0.0), total, None)]
         for i in range(1, len(corners) - 1):
             a, b = corners[i] - corners[i - 1], corners[i + 1] - corners[i]
             turn = math.acos(float(np.clip(a @ b / (legs[i - 1] * legs[i]), -1.0, 1.0)))
-            if turn > 1e-6:
+            if turn > math.radians(GENTLE):     # a gentler bend climbs on as it turns
                 if turn > math.radians(SHARPEST):
                     raise ValueError("The path turns back on itself at ({:.0f}, {:.0f}), by {:.0f} degrees; "
                                      "at most {} can be walked.".format(*corners[i], math.degrees(turn), SHARPEST))
@@ -188,8 +195,9 @@ def ground(brief, host, drawing):
                 holds.append((s, s, float(pin[2])))
                 placed.add(k)
         marks = [h[0] for h in holds] + [h[1] for h in holds] + list(at)
-        s = np.unique(np.round(np.concatenate([np.arange(0.0, total, brief.spacing), [total], marks]), 6))
-        s = s[(s >= 0) & (s <= total)]
+        # rounded so that marks a hair apart are one; clipped, not dropped, so the ends always stay
+        s = np.unique(np.clip(np.round(np.concatenate([np.arange(0.0, total, brief.spacing), [total], marks]), 6),
+                              0.0, total))
         x, y = np.interp(s, at, corners[:, 0]), np.interp(s, at, corners[:, 1])
         tx, ty = np.gradient(x, s), np.gradient(y, s)
         norm = np.hypot(tx, ty)
@@ -201,6 +209,32 @@ def ground(brief, host, drawing):
         if k not in placed:
             raise ValueError("The pin at ({:.0f}, {:.0f}) is not on any path.".format(pin[0], pin[1]))
     return profiles
+
+
+def _arms(paths):
+    """Where paths end: for each end point, ``(path, end, direction)`` of every path leaving it."""
+    arms = {}
+    for n, path in enumerate(paths):
+        for end, (a, b) in ((0, (path[0], path[1])), (-1, (path[-1], path[-2]))):
+            d = np.array([b[0] - a[0], b[1] - a[1]], dtype=float)
+            arms.setdefault((round(a[0], 3), round(a[1], 3)), []).append((n, end, d / (np.hypot(*d) or 1.0)))
+    return arms
+
+
+def _end_reach(r, arms, n, end, point):
+    """How far end ``end`` of path ``n`` is held level: ``r``, or as far as it overlaps another path leaving there."""
+    here = arms[(round(point[0], 3), round(point[1], 3))]
+    own = next(d for m, e, d in here if (m, e) == (n, end))
+    reach = r
+    for m, e, other in here:
+        if (m, e) == (n, end):
+            continue
+        between = math.acos(float(np.clip(own @ other, -1.0, 1.0)))
+        if between < math.radians(180 - SHARPEST):
+            raise ValueError("Two paths leave ({:.0f}, {:.0f}) {:.0f} degrees apart: at least {} can be walked."
+                             .format(point[0], point[1], math.degrees(between), 180 - SHARPEST))
+        reach = max(reach, r / math.tan(between / 2))
+    return reach
 
 
 def _nearest(corners, at, point):
@@ -319,6 +353,12 @@ def _straight(a, b):
     return ax * bx + ay * by > 1 - 1e-9
 
 
+def _bend(a, b):
+    """How far the path turns in plan from piece ``a`` to piece ``b``, in radians."""
+    (ax, ay), (bx, by) = a.direction, b.direction
+    return math.acos(min(max(ax * bx + ay * by, -1.0), 1.0))
+
+
 def _same_line(a, b):
     """Whether two pieces continue each other: one direction in plan, one slope."""
     return _straight(a, b) and abs(a.rise / a.run - b.rise / b.run) < 1e-9
@@ -327,8 +367,17 @@ def _same_line(a, b):
 def _band(brief, runs, below, above):
     """The solid from ``below`` under the walking surface (or down to each piece's bottom) to ``above`` over it."""
     parts = []
-    for seg in runs:
+    r = brief.width / 2
+
+    def reach(a, b):
+        """How far a piece runs on past its end into a gentle bend, to close the bend's outside: a mitre."""
+        turn = _bend(a, b)
+        return OVERLAP + (r * math.tan(turn / 2) if turn <= math.radians(GENTLE) else 0.0)
+
+    for i, seg in enumerate(runs):
         (x, y, z), (ux, uy) = seg.start, seg.direction
+        back = reach(runs[i - 1], seg) if i > 0 else OVERLAP
+        on = reach(seg, runs[i + 1]) if i + 1 < len(runs) else OVERLAP
         slope = seg.rise / seg.run
         up = [-ux * slope, -uy * slope, 1]
         if below is None:   # down to a level bottom, in the host
@@ -336,16 +385,17 @@ def _band(brief, runs, below, above):
         else:               # a band of even depth under the walking surface
             lo, underside = min(seg.start[2], seg.end[2]) - below, VolPlane(Plane([x, y, z - below], [-v for v in up]))
         hi = max(seg.start[2], seg.end[2]) + above
-        frame = Frame([x + ux * seg.run / 2, y + uy * seg.run / 2, (lo + hi) / 2], [ux, uy, 0], [-uy, ux, 0])
+        middle = (seg.run + on - back) / 2
+        frame = Frame([x + ux * middle, y + uy * middle, (lo + hi) / 2], [ux, uy, 0], [-uy, ux, 0])
         parts.append(nodes.boolean([
-            nodes.box(frame, seg.run + 2 * OVERLAP, brief.width, hi - lo, 0),
+            nodes.box(frame, seg.run + back + on, brief.width, hi - lo, 0),
             VolPlane(Plane([x, y, z + above], up)),
             underside,
         ], "intersection", 0))
-    # a round joint where the path turns or ends; the grade holds it level width / 2 each way
+    # a round joint where the path turns sharply or ends; the grade holds it level there
     for i in range(len(runs) + 1):
         touching = runs[max(i - 1, 0):i + 1]
-        if len(touching) == 2 and _straight(*touching):
+        if len(touching) == 2 and _bend(*touching) <= math.radians(GENTLE):
             continue
         x, y, z = runs[i].start if i < len(runs) else runs[-1].end
         down = z - min(t.bottom for t in touching) if below is None else below

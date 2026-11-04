@@ -16,10 +16,12 @@ uv run python -m pytest projects/roof-circulation
 
 | Controlled: `Brief`, the rules every path keeps | Free: `Drawing` and the tuning numbers |
 |---|---|
-| `ramp_max`: 1:12, or gentler, never steeper (the brief refuses it) | stops: an entrance, places to pass, an exit; or path centre lines drawn yourself |
+| `ramp_max`: 1:12, or gentler, never steeper (the brief refuses it) | entrances: a network grows from them; or stops to route through; or paths drawn yourself |
+| every branch end keeps `edge_clearance` from the roof's edge and holes | `branches`: how many ends a network grows to |
 | no stairs: where 1:12 cannot be kept, `grade` says where to draw the route longer | pins: levels held where drawn, such as a lookout |
-| a level landing at every turn and end: `width / 2`, longer at a sharp turn, as far as its arms overlap | `avoid_slope`: how strongly a route keeps to gentle ground |
-| a route never runs over itself, and keeps `width / 2` clear of holes and edges | `width` |
+| a level landing at every end, fork and turn sharper than 8 degrees: `width / 2`, longer where paths meet sharply; a gentler bend climbs on as it turns | `avoid_slope`: how strongly a route keeps to gentle ground |
+| a route never runs over itself, and keeps `width / 2` clear of holes and edges | `turns`: how many times a route swings side to side between stops: 0 straight, more winds more |
+| a route turns no more than it gains by: every turn costs walking | `width` |
 | `headroom` kept empty above, `support` kept solid below | `smoothing`: how closely the path follows the roof |
 | both ends meet the roof's surface | `wave`, `wavelength`: a wave along the path, of any length |
 
@@ -32,7 +34,8 @@ that allows about `wavelength / 75` (80 mm for a 6 m wave).
 |---|---|
 | `host` | a stand-in rocky roof (`VolRock`); any field can replace it, a mesh through `VolGrid.from_mesh` |
 | `slopes` | the roof's top and slope every `cell` mm: where a path could follow it as it is; holes marked |
-| `route` | each set of stops as a path: the cheapest way, where a step costs more the steeper it climbs in the direction it goes, so it crosses slopes along their contours |
+| `route` | each set of stops as a path: the cheapest way, where a step costs more the steeper it climbs in the direction it goes and the further it turns, so it crosses slopes along their contours in long legs; swinging `turns` times between stops through the gentlest ground near each swing; pulled taut between swings, and drawn as one smooth winding line |
+| `network` | from entrances alone, a walk branching out over the gentle ground: each end far from what is walked, each branch leaving the walk where cheapest, split at every fork, and kept only if walkable at 1:12 |
 | `ground` | the roof's surface under every path, followed every `spacing` mm |
 | `grade` | the walking level: the surface averaged over `smoothing`, plus the wave, within 1:12, meeting the roof at both ends, through every pin, level at every turn |
 | `segments` | the graded path as straight pieces, each reaching `depth` into the roof below it |
