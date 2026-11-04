@@ -24,8 +24,8 @@ owner. It was written at a handoff between agents (Claude Code to Codex), on 202
   attribution line the session asks for.
 - No pull request is open. When the owner asks for one: from the fork to `rccn-dev/rcs26` `main`; the description
   says AI was used and that `uv.lock` changed only to add this project (needs the maintainer's review).
-- State at handoff: commits up to `5b4cabb` are pushed. **The rest-landing work is uncommitted** (brief.py,
-  steps.py, routing.py, checks.py, drawing.py, preview.py, tests, notebook, README, this file). 148 tests pass.
+- State at handoff: everything is committed and pushed to the fork, up to the commit that added this file
+  (rest landings included). 148 tests pass, ruff is clean, the notebook runs.
 
 ## Commands
 
