@@ -25,12 +25,12 @@ def path_clear(brief, segments, solid, spacing=250.0, inset=50.0, toe=10.0):
     ``{"samples": n, "unsupported": n, "blocked": n}``; a sound design has
     zero of each, whatever the other modules added.
     """
-    offsets = (0.0, brief.width / 2 - inset, inset - brief.width / 2)
     samples = []
     for runs in segments:
         for seg in runs:
             ux, uy = seg.direction
-            samples += [(x - uy * o, y + ux * o, z) for x, y, z in seg.points(spacing) for o in offsets]
+            half = (seg.width or brief.width) / 2 - inset
+            samples += [(x - uy * o, y + ux * o, z) for x, y, z in seg.points(spacing) for o in (0.0, half, -half)]
     x, y, z = np.array(samples).T
 
     def solid_at(height):   # every sample at once: one array, not a call per point

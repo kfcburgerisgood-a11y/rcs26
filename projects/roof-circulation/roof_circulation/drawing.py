@@ -93,6 +93,12 @@ class Drawing:
         return cls(stops=[Polyline([[1500, 1500, 0], [16500, 10500, 0]])])
 
     @classmethod
+    def sample_lookout(cls):
+        """The way across, by a lookout held at 900 on its way: a climb for its rests."""
+        return cls(pins=[Point(9000, 7000, 900)],
+                   stops=[Polyline([[1500, 1500, 0], [9000, 7000, 0], [16500, 10500, 0]])])
+
+    @classmethod
     def sample_entrance(cls):
         """One way onto the stand-in rock, for a network to grow from."""
         return cls(entrances=[Point(1500, 2000, 0)])

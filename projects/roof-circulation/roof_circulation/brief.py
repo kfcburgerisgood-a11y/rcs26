@@ -7,6 +7,7 @@ from dataclasses import dataclass
 __all__ = ["Brief", "RAMP_LIMIT"]
 
 RAMP_LIMIT = 1 / 12     # the steepest a ramp may ever be: no brief may ask for more
+WIDTH_LEAST = 1200.0    # the narrowest a path may be
 
 
 @dataclass
@@ -36,13 +37,18 @@ class Brief:
     rock_seed: int = 3
 
     # the path: a ramp everywhere, never stairs
-    width: float = 1200.0           # clear walking width; also the level landing at every turn and end
+    width: float = 1200.0           # clear walking width, at least 1200; 1500 where there is no stair beside it
     ramp_max: float = RAMP_LIMIT    # steepest the path may be: 1:12, or gentler
     smoothing: float = 3000.0       # the path follows the rock averaged over this length
     spacing: float = 250.0          # the path is followed every this many mm
     depth: float = 150.0            # the path's solid reaches this far into the rock below it
     headroom: float = 2100.0        # kept empty above the walking surface
     support: float = 300.0          # below the walking surface, no later process may remove
+
+    # rest landings, by code every 750 of climb, 1500 long; 0 rise for none
+    rest_rise: float = 750.0        # the most a path climbs between rests
+    rest_length: float = 1500.0     # each rest landing's length along the path
+    rest_bay: float = 1500.0        # a bay beside each, this deep, to sit or turn a wheelchair: 0 for none
 
     # the wave along the path, fading out at its ends; lowered wherever it would pass ramp_max
     wave: float = 0.0               # height of the wave: 0 for none
@@ -72,6 +78,8 @@ class Brief:
         if not 0 < self.ramp_max <= RAMP_LIMIT + 1e-12:
             message = "ramp_max is {:.4g}; a ramp may be at most 1:12 ({:.4f})"
             raise ValueError(message.format(self.ramp_max, RAMP_LIMIT))
+        if self.width < WIDTH_LEAST:
+            raise ValueError("width is {:.0f}; a path is at least {:.0f} wide".format(self.width, WIDTH_LEAST))
         if not 0 <= self.attract < 1:
             raise ValueError("attract is {}; it is 0 to under 1, a share cheaper".format(self.attract))
 

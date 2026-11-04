@@ -62,13 +62,15 @@ def plan(bounds, host, profiles, samples=200, title="paths on the host"):
 
 
 def profile(profiles, title="along each path"):
-    """Each path unrolled: the host's surface under it, and the level walked on."""
+    """Each path unrolled: the host's surface under it, the level walked on, and its rest landings in green."""
     import matplotlib.pyplot as plt
 
     _, ax = plt.subplots(figsize=(10, 3))
     for p in profiles:
         ax.fill_between(p.s, p.ground, min(p.ground.min(), p.level.min()) - 200, color="0.85", label="host")
         ax.plot(p.s, p.level, color="tab:blue", label="walking level")
+        for a, b, _, _ in p.rests:
+            ax.axvspan(a, b, color="tab:green", alpha=0.25, lw=0)
         for a, b, level in p.holds:
             if level is not None and a == b:
                 ax.plot(a, level, "o", color="tab:red")

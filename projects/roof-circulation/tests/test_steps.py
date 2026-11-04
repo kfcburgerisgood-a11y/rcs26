@@ -336,6 +336,64 @@ def test_a_gentle_bend_climbs_on_and_a_sharper_one_is_a_landing(bend, landing):
     assert (len(profiles[0].holds) > 2) == landing                      # beyond the two ends
 
 
+HILL = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1050)])   # 450 up, 450 down
+
+
+def rested(brief, drawing=HILL):
+    roof = steps.host(brief)
+    profiles = steps.rest(brief, roof, steps.grade(brief, steps.ground(brief, roof, drawing)), drawing)
+    return roof, profiles, steps.segments(brief, profiles)
+
+
+def test_a_path_is_at_least_1200_wide():
+    with pytest.raises(ValueError, match="at least 1200"):
+        Brief(width=1100.0)
+    assert Brief(width=1500.0).width == 1500.0
+
+
+def test_a_long_climb_rests_every_rest_rise_on_a_level_landing():
+    brief = Brief(roughness=0.0, rest_rise=300.0)
+    _, profiles, _ = rested(brief)
+    p = profiles[0]
+    assert len(p.rests) == 2                                            # one on the way up, one down
+    for a, b, _, _ in p.rests:
+        assert b - a == pytest.approx(brief.rest_length)
+        inside = (p.s >= a - 1e-6) & (p.s <= b + 1e-6)
+        assert np.ptp(p.level[inside]) == pytest.approx(0.0, abs=1e-6)
+        assert np.interp((a + b) / 2, p.s, p.level) == pytest.approx(825.0)   # halfway up the 450
+    assert steps._long_climb(brief, p) is None                          # nothing left climbs too far
+
+
+def test_no_rests_when_rest_rise_is_zero_or_no_climb_is_long_enough():
+    assert not rested(Brief(roughness=0.0, rest_rise=0.0))[1][0].rests
+    assert not rested(Brief(roughness=0.0, rest_rise=500.0))[1][0].rests    # 450 up, then down: counted apart
+
+
+def test_a_rest_goes_by_an_attractor_near_where_it_may():
+    brief = Brief(roughness=0.0, rest_rise=300.0)
+    plain = rested(brief)[1][0].rests[0][0]
+    lured = Drawing(list(HILL.paths), list(HILL.pins), attractors=[Point(5500, 2000, 0)])
+    assert rested(brief, lured)[1][0].rests[0][0] > plain + 200
+
+
+def test_each_rest_has_a_bay_beside_it_to_stand_in():
+    brief = Brief(roughness=0.0, rest_rise=300.0)
+    roof, profiles, runs = rested(brief)
+    bays = runs[1:]
+    assert len(bays) == 2 and all(r[0].width == brief.rest_bay for r in bays)
+    x, y, level = bays[0][0].start
+    assert abs(y - 2000) == pytest.approx((brief.width + brief.rest_bay) / 2 - steps.OVERLAP)
+    solid = combine(roof, [steps.circulation(brief, runs)])
+    assert solid.get_distance([x, y, level - 50]) < 0                   # floor
+    assert solid.get_distance([x, y, level + 1000]) > 0                 # open above
+    assert len(rested(Brief(roughness=0.0, rest_rise=300.0, rest_bay=0.0))[2]) == 1
+
+
+def test_a_climb_too_short_for_its_rests_says_so():
+    with pytest.raises(ValueError, match="rest landings"):
+        rested(Brief(roughness=0.0, rest_rise=300.0, rest_length=4000.0))
+
+
 def test_a_path_is_followed_all_the_way_to_its_end():
     # 5830.951894845... mm long: rounding the last sample up must not drop it
     _, profiles, _ = build(FLAT, straight(start=(1000, 2000), end=(6000, 5000)))

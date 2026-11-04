@@ -145,7 +145,7 @@ def network(brief, roof, found, drawing):
     if not can_end.any():
         raise ValueError("Nowhere to end a branch: no ground reachable from the entrances is gentler than 1:{:.0f} "
                          "and {:.0f} mm from the roof's edge.".format(1 / brief.ramp_max, brief.edge_clearance))
-    from .steps import grade, ground     # here, not at the top: steps imports this module
+    from .steps import grade, ground, rest     # here, not at the top: steps imports this module
 
     walk, grown = [], 0
     for _ in range(4 * brief.branches):     # shortcut: a few tries per branch, then fewer branches than asked
@@ -164,8 +164,9 @@ def network(brief, roof, found, drawing):
         fork, split = _fork(walk, starts, (float(found.x[cells[0][0]]), float(found.y[cells[0][1]])), brief.width)
         leg = [fork] + [(float(found.x[i]), float(found.y[j])) for i, j in cells[1:-1]] + [end]
         trial = split + [_wind(brief, found, room, leg)]
-        try:    # a branch is kept only if every piece can still be walked at ramp_max
-            grade(brief, ground(brief, roof, Drawing([Polyline([[x, y, 0.0] for x, y in line]) for line in trial])))
+        try:    # a branch is kept only if every piece can still be walked at ramp_max, with its rests
+            pieces = Drawing([Polyline([[x, y, 0.0] for x, y in line]) for line in trial])
+            rest(brief, roof, grade(brief, ground(brief, roof, pieces)), drawing)
         except ValueError:
             can_end &= ~_near(found, [[end]], brief.width * 2)
             continue
@@ -279,7 +280,7 @@ def _pull(brief, found, room, height, way, weight):
 
 
 def _wind(brief, found, room, way):
-    """The way found, from grid step to grid step, as a smooth winding line every ``width / 4`` mm.
+    """The way found, from grid step to grid step, as a smooth winding line every ``width / 6`` mm.
 
     Each point is averaged with its neighbours over ``bend`` mm: longer for
     sweeping curves, shorter to follow the ground closely; the ends stay where
@@ -291,11 +292,12 @@ def _wind(brief, found, room, way):
     """
     points = np.array(way, dtype=float)
     k = max(1, int(round(brief.bend / 2 / brief.cell)))
-    smooth = points.copy()
-    for i in range(1, len(points) - 1):
-        smooth[i] = points[max(i - k, 0):i + k + 1].mean(axis=0)
+    # mirrored past each end, so the average there is even and the line runs into its end without a kink
+    n = min(k, len(points) - 1)
+    padded = np.concatenate([2 * points[0] - points[n:0:-1], points, 2 * points[-1] - points[-2:-n - 2:-1]])
+    smooth = np.array([padded[i:i + 2 * n + 1].mean(axis=0) for i in range(len(points))])
     at = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(smooth, axis=0).T))])
-    u = np.linspace(0.0, at[-1], max(1, int(round(at[-1] / (brief.width / 4)))) + 1)
+    u = np.linspace(0.0, at[-1], max(1, int(round(at[-1] / (brief.width / 6)))) + 1)
     line = [(float(x), float(y)) for x, y in zip(np.interp(u, at, smooth[:, 0]), np.interp(u, at, smooth[:, 1]))]
     line[0], line[-1] = tuple(way[0]), tuple(way[-1])
     if all(_fits(found, room, p, q) for p, q in zip(line[:-1], line[1:])):
