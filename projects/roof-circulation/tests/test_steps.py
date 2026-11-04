@@ -258,6 +258,58 @@ def test_a_route_swings_to_one_side_and_back_but_keeps_its_stops():
     assert list(path[0])[:2] == [1500, 1500] and list(path[-1])[:2] == [16500, 10500]
 
 
+MIDDLE, ACROSS = (9000, 6000), (-9000 / math.hypot(15000, 9000), 15000 / math.hypot(15000, 9000))
+
+
+def closest(path, point):
+    return float(np.hypot(*(along(path) - point).T).min())
+
+
+def crossing_with(brief, **points):
+    roof = steps.host(brief)
+    drawing = Drawing.sample_crossing()
+    for name, where in points.items():
+        setattr(drawing, name, [Point(x, y, 0) for x, y in where])
+    return steps.route(brief, steps.slopes(brief, roof), drawing)
+
+
+def test_an_attractor_draws_a_route_towards_it():
+    flat = Brief(roughness=0.0)
+    lure = (MIDDLE[0] + 2000 * ACROSS[0], MIDDLE[1] + 2000 * ACROSS[1])     # 2 m off the straight line
+    plain = closest(crossing_with(flat).paths[0], lure)
+    drawn = crossing_with(flat, attractors=[lure])
+    assert closest(drawn.paths[0], lure) < plain - 500
+    assert drawn.attractors[0][0] == pytest.approx(lure[0])                   # kept, for the map
+
+
+def test_a_repeller_keeps_a_route_away():
+    flat = Brief(roughness=0.0)
+    assert closest(crossing_with(flat).paths[0], MIDDLE) < flat.cell          # straight through it, without
+    assert closest(crossing_with(flat, repellers=[MIDDLE]).paths[0], MIDDLE) > 1000
+
+
+def test_an_attractor_near_a_swing_captures_it_even_on_the_rock():
+    rock = Brief(turns=4)
+    lure = (6000, 6000)
+    plain = closest(crossing_with(rock).paths[0], lure)
+    assert closest(crossing_with(rock, attractors=[lure]).paths[0], lure) < min(plain, rock.width)
+
+
+def test_a_wider_swing_bows_further():
+    narrow, wide = (crossing(Brief(roughness=0.0, turns=1, swing=s))[1].paths[0] for s in (0.25, 0.75))
+    assert aside(wide).max() > aside(narrow).max() + 1000
+
+
+def test_a_longer_bend_sweeps_and_a_shorter_one_hugs_the_ground():
+    loose, tight = (turning(crossing(Brief(turns=4, bend=b))[1].paths[0]) for b in (4800.0, 1200.0))
+    assert loose < tight
+
+
+def test_attract_is_a_share_cheaper_under_one():
+    with pytest.raises(ValueError, match="attract"):
+        Brief(attract=1.0)
+
+
 def test_a_winding_crossing_can_be_walked_on_the_rock():
     brief = Brief(wave=60.0, turns=4)
     roof, drawing = crossing(brief)

@@ -21,7 +21,10 @@ uv run python -m pytest projects/roof-circulation
 | no stairs: where 1:12 cannot be kept, `grade` says where to draw the route longer | pins: levels held where drawn, such as a lookout |
 | a level landing at every end, fork and turn sharper than 8 degrees: `width / 2`, longer where paths meet sharply; a gentler bend climbs on as it turns | `avoid_slope`: how strongly a route keeps to gentle ground |
 | a route never runs over itself, and keeps `width / 2` clear of holes and edges | `turns`: how many times a route swings side to side between stops: 0 straight, more winds more |
-| a route turns no more than it gains by: every turn costs walking | `width` |
+| a route turns no more than it gains by: every turn costs walking | `swing`: how far each swing goes aside |
+| | `bend`: the length bends are smoothed over: longer sweeps, shorter hugs the ground |
+| | attractors and repellers: places a route bends towards or keeps from, within `influence` (`attract`, `repel`); an attractor near a swing captures it |
+| | `width` |
 | `headroom` kept empty above, `support` kept solid below | `smoothing`: how closely the path follows the roof |
 | both ends meet the roof's surface | `wave`, `wavelength`: a wave along the path, of any length |
 

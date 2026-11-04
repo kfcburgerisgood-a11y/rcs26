@@ -52,6 +52,12 @@ class Brief:
     cell: float = 250.0             # plan grid for the slope map and the route search
     avoid_slope: float = 4.0        # how strongly a route avoids climbing: 0 goes straight
     turns: int = 0                  # how many times a route swings side to side between stops: 0 for none
+    swing: float = 0.5              # how far each swing goes aside, over the spacing between swings
+    bend: float = 2400.0            # length a route's bends are smoothed over: longer sweeps, shorter hugs the ground
+    attract: float = 0.7            # how much cheaper a step is at an attractor, 0 to under 1: a route detours
+                                    # to one or it does not, so this acts more as a switch than a dial
+    repel: float = 9.0              # how much dearer a step is at a repeller: 1 + this, times
+    influence: float = 3000.0       # how far an attractor or repeller reaches, fading to nothing
     route_tolerance: float = 300.0  # where a winding line will not fit, how far a straightened one may stray
     branches: int = 3               # how many ends a network grows to from its entrances
     edge_clearance: float = 1500.0  # how far every path end keeps from the roof's edge and its holes
@@ -66,6 +72,8 @@ class Brief:
         if not 0 < self.ramp_max <= RAMP_LIMIT + 1e-12:
             message = "ramp_max is {:.4g}; a ramp may be at most 1:12 ({:.4f})"
             raise ValueError(message.format(self.ramp_max, RAMP_LIMIT))
+        if not 0 <= self.attract < 1:
+            raise ValueError("attract is {}; it is 0 to under 1, a share cheaper".format(self.attract))
 
     def to_dict(self):
         return dataclasses.asdict(self)

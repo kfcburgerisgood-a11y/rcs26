@@ -13,6 +13,9 @@ from .drawing import Drawing
 __all__ = ["route", "network"]
 
 ALONGSIDE = 20.0    # how much dearer a step is within a path's width of the walk: branches leave it, not shadow it
+# how much a turn costs, as walking: width x (1 - cos(turn)) times this. Measured on a 1:8 slope, under about
+# 0.4 a route zigzags a cell wide and smoothing leaves it straight up the slope; above it, it keeps switchbacks.
+TURN_COST = 1.0
 
 # a step to any of 16 neighbours, so a route can head 16 ways rather than 8
 MOVES = [(1, 0), (0, 1), (1, 1), (1, -1), (1, 2), (2, 1), (1, -2), (2, -1)]
@@ -45,36 +48,41 @@ def route(brief, found, drawing):
     ([1000.0, 1500.0], [5000.0, 1500.0], True)
     """
     room, height = _terrain(brief, found)
+    prefer = _preference(brief, found, drawing)
     paths, taken = list(drawing.paths), []
     for stops in drawing.stops:
         points = [(float(p[0]), float(p[1])) for p in stops]
         corners = [points[0]]
         for a, b in zip(points[:-1], points[1:]):
-            via = [a] + _turning_points(brief, found, room, a, b) + [b]
+            via = [a] + _turning_points(brief, found, room, a, b, prefer, drawing.attractors) + [b]
             way = [a]
             for p, q in zip(via[:-1], via[1:]):
                 # a route never runs over itself or another: what is taken is closed, a cell beyond a path's width
                 # for the smoothing to come, but around p and q, to leave by
                 clear = brief.width + brief.cell
                 free = room & (~_near(found, taken, clear) | _near(found, [[p], [q]], clear))
-                cells = _search(_graph(brief, found, free, height), free.shape, _cell(found, free, p),
+                cells = _search(_graph(brief, found, free, height, prefer), free.shape, _cell(found, free, p),
                                 _cell(found, free, q), p, q)
                 part = [p] + [(float(found.x[i]), float(found.y[j])) for i, j in cells[1:-1]] + [q]
-                part = _pull(brief, found, free, height, part)     # taut between swings, not across them
+                part = _pull(brief, found, free, height, part, prefer)     # taut between swings, not across them
                 taken.append(part)
                 way += part[1:]
             # one smooth line from stop to stop: the swings bend it, they are not corners
             corners += _wind(brief, found, room, way)[1:]
         paths.append(Polyline([[x, y, 0.0] for x, y in corners]))
-    return Drawing(paths, list(drawing.pins), [])
+    return Drawing(paths, list(drawing.pins), [], list(drawing.entrances), list(drawing.attractors),
+                   list(drawing.repellers))
 
 
-def _turning_points(brief, found, room, a, b):
+def _turning_points(brief, found, room, a, b, weight, attractors=()):
     """``turns`` points for a route from ``a`` to ``b`` to swing through, left and right in turn.
 
-    They are spaced evenly along the way and set aside by half that spacing, so
-    each swing leans about 27 degrees off the straight line, however many there
-    are: more turns wind more. Each moves to the gentlest ground near its place.
+    They are spaced evenly along the way and set aside by ``swing`` times that
+    spacing, so each swing leans the same way off the straight line however many
+    there are (0.5: about 27 degrees): more turns wind more, a wider swing bows
+    further. Each moves to the gentlest ground near its place, kept from
+    repellers by ``weight``. An attractor within ``influence`` of a swing's place
+    captures it, the nearest swing only: the swing goes to the attractor.
     """
     if not brief.turns:
         return []
@@ -83,14 +91,20 @@ def _turning_points(brief, found, room, a, b):
     step = length / (brief.turns + 1)
     gx, gy = np.meshgrid(found.x, found.y, indexing="ij")
     steep = np.nan_to_num(found.slope, nan=np.inf)
+    aside = step * brief.swing
+    places = [(a[0] + ux * step * k - uy * (1 if k % 2 else -1) * aside,
+               a[1] + uy * step * k + ux * (1 if k % 2 else -1) * aside) for k in range(1, brief.turns + 1)]
+    for lure in attractors:
+        k = min(range(len(places)), key=lambda n: math.hypot(places[n][0] - lure[0], places[n][1] - lure[1]))
+        if math.hypot(places[k][0] - lure[0], places[k][1] - lure[1]) <= brief.influence:
+            places[k] = (float(lure[0]), float(lure[1]))
     points = []
-    for k in range(1, brief.turns + 1):
-        side = 1 if k % 2 else -1
-        tx, ty = a[0] + ux * step * k - uy * side * step / 2, a[1] + uy * step * k + ux * side * step / 2
+    for tx, ty in places:
         off = np.hypot(gx - tx, gy - ty)
-        near = room & (off <= step / 4)
+        reach = max(aside / 2, brief.cell)
+        near = room & (off <= reach)
         if near.any():  # off the roof, or no room there: no swing
-            score = np.where(near, steep + brief.ramp_max * off / (step / 4), np.inf)
+            score = np.where(near, (steep + brief.ramp_max * off / reach) * weight, np.inf)
             i, j = np.unravel_index(int(score.argmin()), score.shape)
             points.append((float(found.x[i]), float(found.y[j])))
     return points
@@ -144,7 +158,7 @@ def network(brief, roof, found, drawing):
         i, j = np.unravel_index(int(apart.argmax()), apart.shape)
         end = (float(found.x[i]), float(found.y[j]))
         on = _near(found, walk + [[s] for s in starts], brief.cell)
-        weight = np.where(_near(found, walk, brief.width) & ~on, ALONGSIDE, 1.0)
+        weight = np.where(_near(found, walk, brief.width) & ~on, ALONGSIDE, 1.0) * _preference(brief, found, drawing)
         _, way = _walk(_graph(brief, found, room, height, weight), room.shape, np.flatnonzero(on))
         cells = way(np.ravel_multi_index(_cell(found, room, end), room.shape))
         fork, split = _fork(walk, starts, (float(found.x[cells[0][0]]), float(found.y[cells[0][1]])), brief.width)
@@ -157,7 +171,8 @@ def network(brief, roof, found, drawing):
             continue
         walk, grown = trial, grown + 1
     paths = list(drawing.paths) + [Polyline([[x, y, 0.0] for x, y in line]) for line in walk]
-    return Drawing(paths, list(drawing.pins), list(drawing.stops), list(drawing.entrances))
+    return Drawing(paths, list(drawing.pins), list(drawing.stops), list(drawing.entrances),
+                   list(drawing.attractors), list(drawing.repellers))
 
 
 def _fork(walk, starts, point, snap):
@@ -191,6 +206,20 @@ def _tips(paths, entrances):
     return [e for e in ends if ends.count(e) == 1 and e not in doors]
 
 
+def _preference(brief, found, drawing):
+    """How much a step costs in each cell for the drawing's attractors and repellers: a weight, 1 elsewhere.
+
+    Within ``influence`` of an attractor a step is up to ``attract`` cheaper, of a
+    repeller up to ``1 + repel`` times dearer, fading as the square of the way out.
+    """
+    gx, gy = np.meshgrid(found.x, found.y, indexing="ij")
+    weight = np.ones(gx.shape)
+    for points, strength in ((drawing.attractors, -brief.attract), (drawing.repellers, brief.repel)):
+        for p in points:
+            weight *= 1 + strength * np.clip(1 - np.hypot(gx - p[0], gy - p[1]) / brief.influence, 0.0, 1.0) ** 2
+    return weight
+
+
 def _distance(found, lines):
     """Each cell's plan distance to the nearest of ``lines``, each a list of plan points (one point is a dot)."""
     gx, gy = np.meshgrid(found.x, found.y, indexing="ij")
@@ -215,12 +244,13 @@ def _terrain(brief, found):
     return room, np.where(roof, found.height, np.nanmean(found.height))
 
 
-def _pull(brief, found, room, height, way):
+def _pull(brief, found, room, height, way, weight):
     """The way found, pulled taut: straight wherever a straight line costs no more and has room.
 
     On a grid of 16 headings a way between them zigzags or bows; a straight
-    line costs its length and its climb by the same rule as the search, so
-    pulling never takes a steeper shortcut. Returns plan points every ``cell``.
+    line costs its length, its climb and ``weight`` by the same rule as the
+    search, so pulling never takes a steeper shortcut, nor one past a repeller
+    or away from an attractor. Returns plan points every ``cell``.
     """
     def cost(p, q):
         n = max(1, int(math.hypot(q[0] - p[0], q[1] - p[1]) / (brief.cell / 2)))
@@ -229,7 +259,8 @@ def _pull(brief, found, room, height, way):
         j = np.abs(found.y[:, None] - ys).argmin(axis=0)
         step = math.hypot(q[0] - p[0], q[1] - p[1]) / n
         grade = np.abs(np.diff(height[i, j])) / step
-        return float((step * (1 + brief.avoid_slope * (grade / brief.ramp_max) ** 2)).sum())
+        dear = np.maximum(weight[i, j][:-1], weight[i, j][1:])
+        return float((step * (1 + brief.avoid_slope * (grade / brief.ramp_max) ** 2) * dear).sum())
 
     along = [0.0] + [cost(p, q) for p, q in zip(way[:-1], way[1:])]
     spent = np.cumsum(along)
@@ -250,15 +281,16 @@ def _pull(brief, found, room, height, way):
 def _wind(brief, found, room, way):
     """The way found, from grid step to grid step, as a smooth winding line every ``width / 4`` mm.
 
-    Each point is averaged with its neighbours over about twice the path's width,
-    so a wider path bends more gently; the ends stay where they are. Points this
+    Each point is averaged with its neighbours over ``bend`` mm: longer for
+    sweeping curves, shorter to follow the ground closely; the ends stay where
+    they are. Points this
     close keep every bend small: a sloping path is level across, so a bend leaves
     a step on its inside of about slope x width / 2 x the bend, a few mm. Where the
     smooth line would leave the room the path needs, the way is simplified to
     within ``route_tolerance`` instead.
     """
     points = np.array(way, dtype=float)
-    k = max(1, int(round(brief.width / brief.cell)))
+    k = max(1, int(round(brief.bend / 2 / brief.cell)))
     smooth = points.copy()
     for i in range(1, len(points) - 1):
         smooth[i] = points[max(i - k, 0):i + k + 1].mean(axis=0)
@@ -275,9 +307,10 @@ def _graph(brief, found, room, height, weight=None):
     """Every step between neighbouring cells with room, from every heading to every heading.
 
     A node is a cell and the heading it was reached by, so a step costs its
-    length and its climb (times ``weight``) plus how far it turns: ``width x
-    (1 - cos(turn))``, two widths of walking to turn straight back. Without it a
-    route could zigzag a cell wide, for nothing, and smoothing would undo it.
+    length and its climb (times ``weight``) plus how far it turns: ``TURN_COST x
+    width x (1 - cos(turn))``, two widths of walking to turn straight back.
+    Without it a route could zigzag a cell wide, for nothing, and smoothing
+    would undo it.
     """
     nx, ny = room.shape
     index = np.arange(nx * ny).reshape(nx, ny)
@@ -295,7 +328,7 @@ def _graph(brief, found, room, height, weight=None):
         for e, heading in enumerate(headings):    # arriving by heading e, leaving by d
             rows.append(index[here][ok] * len(MOVES) + e)
             cols.append(index[there][ok] * len(MOVES) + d)
-            costs.append(cost[ok] + brief.width * (1 - math.cos(headings[d] - heading)))
+            costs.append(cost[ok] + TURN_COST * brief.width * (1 - math.cos(headings[d] - heading)))
     size = nx * ny * len(MOVES)
     return coo_matrix((np.concatenate(costs), (np.concatenate(rows), np.concatenate(cols))), shape=(size, size)).tocsr()
 

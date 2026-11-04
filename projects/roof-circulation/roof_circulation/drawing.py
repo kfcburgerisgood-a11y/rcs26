@@ -26,6 +26,9 @@ class Drawing:
     entrances : list[:class:`compas.geometry.Point`]
         Where people come onto the roof. ``network`` grows branching paths
         from them over the gentle ground.
+    attractors, repellers : list[:class:`compas.geometry.Point`]
+        Places a route bends towards (a view, shade, a planter) or keeps away
+        from (a drain, an opening's edge), within the brief's ``influence``.
 
     Examples
     --------
@@ -41,9 +44,12 @@ class Drawing:
     pins: list = field(default_factory=list)
     stops: list = field(default_factory=list)
     entrances: list = field(default_factory=list)
+    attractors: list = field(default_factory=list)
+    repellers: list = field(default_factory=list)
 
     def to_data(self):
-        return {"paths": self.paths, "pins": self.pins, "stops": self.stops, "entrances": self.entrances}
+        return {"paths": self.paths, "pins": self.pins, "stops": self.stops, "entrances": self.entrances,
+                "attractors": self.attractors, "repellers": self.repellers}
 
     @classmethod
     def from_data(cls, data):
@@ -52,6 +58,8 @@ class Drawing:
             [Point(*p) for p in data.get("pins", [])],
             [Polyline(p) for p in data.get("stops", [])],
             [Point(*p) for p in data.get("entrances", [])],
+            [Point(*p) for p in data.get("attractors", [])],
+            [Point(*p) for p in data.get("repellers", [])],
         )
 
     def save(self, path):
