@@ -48,8 +48,10 @@ class Brief:
     wave: float = 0.0               # height of the wave: 0 for none
     wavelength: float = 6000.0      # crest to crest
 
-    # reading the roof
-    cell: float = 250.0             # plan grid for the slope map
+    # reading the roof, and finding routes over it
+    cell: float = 250.0             # plan grid for the slope map and the route search
+    avoid_slope: float = 4.0        # how strongly a route avoids climbing: 0 goes straight
+    route_tolerance: float = 300.0  # how far a route may stray from the way found when it is simplified
 
     # where to look for the host's surface, and how to sample it
     search_top: float = 6000.0      # above any roof

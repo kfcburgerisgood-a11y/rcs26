@@ -20,26 +20,34 @@ class Drawing:
     pins : list[:class:`compas.geometry.Point`]
         Levels held where they are drawn: a lookout, a bridge. Each sits on a
         path, within half its width, and its Z is the level there.
+    stops : list[:class:`compas.geometry.Polyline`]
+        Routes to find rather than draw: each from its first point, through
+        the others in order, to its last. ``route`` turns each into a path.
 
     Examples
     --------
     >>> drawing = Drawing.sample()
     >>> len(drawing.paths), len(drawing.paths[0]), len(drawing.pins)
     (1, 6, 1)
-    >>> again = Drawing.from_data(compas.json_loads(compas.json_dumps(drawing.to_data())))
-    >>> again.paths[0][1] == drawing.paths[0][1], again.pins[0] == drawing.pins[0]
-    (True, True)
+    >>> again = Drawing.from_data(compas.json_loads(compas.json_dumps(Drawing.sample_stops().to_data())))
+    >>> len(again.stops[0]), again.pins[0] == Drawing.sample_stops().pins[0]
+    (3, True)
     """
 
     paths: list = field(default_factory=list)
     pins: list = field(default_factory=list)
+    stops: list = field(default_factory=list)
 
     def to_data(self):
-        return {"paths": self.paths, "pins": self.pins}
+        return {"paths": self.paths, "pins": self.pins, "stops": self.stops}
 
     @classmethod
     def from_data(cls, data):
-        return cls([Polyline(p) for p in data.get("paths", [])], [Point(*p) for p in data.get("pins", [])])
+        return cls(
+            [Polyline(p) for p in data.get("paths", [])],
+            [Point(*p) for p in data.get("pins", [])],
+            [Polyline(p) for p in data.get("stops", [])],
+        )
 
     def save(self, path):
         compas.json_dump(self.to_data(), path, pretty=True)
@@ -51,9 +59,17 @@ class Drawing:
 
     @classmethod
     def sample(cls):
-        """A walk over the stand-in rock: along it, round a corner, up to a lookout held at 1300, and back."""
+        """A walk drawn over the stand-in rock: along it, round a corner, up to a lookout held at 1300, and back."""
         return cls(
             [Polyline([[1500, 2000, 0], [9000, 2000, 0], [14500, 3500, 0], [14500, 9500, 0], [7000, 9500, 0],
                        [3000, 6500, 0]])],
             [Point(14500, 9500, 1300)],
+        )
+
+    @classmethod
+    def sample_stops(cls):
+        """The same walk to be found instead: an entrance, the lookout, an exit."""
+        return cls(
+            pins=[Point(14500, 9500, 1300)],
+            stops=[Polyline([[1500, 2000, 0], [14500, 9500, 0], [3000, 6500, 0]])],
         )

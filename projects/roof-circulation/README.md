@@ -16,9 +16,10 @@ uv run python -m pytest projects/roof-circulation
 
 | Controlled: `Brief`, the rules every path keeps | Free: `Drawing` and the tuning numbers |
 |---|---|
-| `ramp_max`: 1:12, or gentler, never steeper (the brief refuses it) | path centre lines, in plan |
+| `ramp_max`: 1:12, or gentler, never steeper (the brief refuses it) | stops: an entrance, places to pass, an exit; or path centre lines drawn yourself |
 | no stairs: where 1:12 cannot be kept, `grade` says where to draw the route longer | pins: levels held where drawn, such as a lookout |
-| a level landing `width / 2` long at every turn and end | `width` |
+| a level landing at every turn and end: `width / 2`, longer at a sharp turn, as far as its arms overlap | `avoid_slope`: how strongly a route keeps to gentle ground |
+| a route never runs over itself, and keeps `width / 2` clear of holes and edges | `width` |
 | `headroom` kept empty above, `support` kept solid below | `smoothing`: how closely the path follows the roof |
 | both ends meet the roof's surface | `wave`, `wavelength`: a wave along the path, of any length |
 
@@ -31,6 +32,7 @@ that allows about `wavelength / 75` (80 mm for a 6 m wave).
 |---|---|
 | `host` | a stand-in rocky roof (`VolRock`); any field can replace it, a mesh through `VolGrid.from_mesh` |
 | `slopes` | the roof's top and slope every `cell` mm: where a path could follow it as it is; holes marked |
+| `route` | each set of stops as a path: the cheapest way, where a step costs more the steeper it climbs in the direction it goes, so it crosses slopes along their contours |
 | `ground` | the roof's surface under every path, followed every `spacing` mm |
 | `grade` | the walking level: the surface averaged over `smoothing`, plus the wave, within 1:12, meeting the roof at both ends, through every pin, level at every turn |
 | `segments` | the graded path as straight pieces, each reaching `depth` into the roof below it |

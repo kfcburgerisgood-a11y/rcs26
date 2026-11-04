@@ -24,13 +24,15 @@ from compas_vol.primitives import VolPlane
 
 from .contribution import Contribution, combine
 from .rock import VolRock
+from .routing import route
 
 __all__ = [
-    "Profile", "Segment", "SlopeMap", "host", "slopes", "ground", "grade", "segments", "walk", "clearance", "support",
-    "circulation", "combine", "extent", "export",
+    "Profile", "Segment", "SlopeMap", "host", "slopes", "route", "ground", "grade", "segments", "walk", "clearance",
+    "support", "circulation", "combine", "extent", "export",
 ]
 
 OVERLAP = 1.0   # mm: neighbouring pieces overlap this much, so the seam between them never reads as a surface
+SHARPEST = 160  # degrees: a sharper turn doubles back, and its two arms would lie on each other
 
 
 @dataclass
@@ -156,7 +158,8 @@ def ground(brief, host, drawing):
 
     Reads ``width``, ``spacing``, ``voxel``, ``search_top``, ``search_bottom``. Each path
     is followed every ``spacing`` mm, and at every vertex and pin. Its ends and
-    turns are held level ``width / 2`` each way, and each pin at its Z.
+    turns are held level ``width / 2`` each way, further at a sharp turn, where the
+    two arms overlap: ``width / 2 x tan(turn / 2)``. Each pin is held at its Z.
     Returns one :class:`Profile` per path, without a level yet.
     """
     r = brief.width / 2
@@ -171,8 +174,14 @@ def ground(brief, host, drawing):
         holds = [(0.0, min(r, total), None), (max(total - r, 0.0), total, None)]
         for i in range(1, len(corners) - 1):
             a, b = corners[i] - corners[i - 1], corners[i + 1] - corners[i]
-            if a @ b < (1 - 1e-9) * legs[i - 1] * legs[i]:
-                holds.append((at[i] - r, at[i] + r, None))
+            turn = math.acos(float(np.clip(a @ b / (legs[i - 1] * legs[i]), -1.0, 1.0)))
+            if turn > 1e-6:
+                if turn > math.radians(SHARPEST):
+                    raise ValueError("The path turns back on itself at ({:.0f}, {:.0f}), by {:.0f} degrees; "
+                                     "at most {} can be walked.".format(*corners[i], math.degrees(turn), SHARPEST))
+                # the two arms overlap this far from a sharp corner: level all of it, past the next corner if need be
+                reach = r * max(1.0, math.tan(turn / 2))
+                holds.append((max(at[i] - reach, 0.0), min(at[i] + reach, total), None))
         for k, pin in enumerate(drawing.pins):
             s, off = _nearest(corners, at, pin)
             if off <= r:

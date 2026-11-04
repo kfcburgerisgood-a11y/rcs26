@@ -1,5 +1,7 @@
 """The workflow's steps: they run, and they keep their rules. Add a test for each rule you add."""
 
+import math
+
 import compas
 import numpy as np
 import pytest
@@ -66,6 +68,83 @@ def test_the_slope_map_marks_a_hole_as_no_roof():
     i, j = np.searchsorted(found.x, 2000), np.searchsorted(found.y, 1500)
     assert np.isnan(found.height[i, j]) and not found.walkable(SMALL.ramp_max)[i, j]
     assert found.walkable(SMALL.ramp_max)[0, 0]                         # far from it: flat roof
+
+
+def stops(*points):
+    return Drawing(stops=[Polyline([[x, y, 0] for x, y in points])])
+
+
+def along(path, step=50.0):
+    """Plan points every ``step`` mm along a path."""
+    points = []
+    for p, q in zip(path[:-1], path[1:]):
+        n = max(2, int(np.hypot(q[0] - p[0], q[1] - p[1]) / step))
+        points += [(p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])) for t in np.linspace(0, 1, n)]
+    return np.array(points)
+
+
+def length(path):
+    return float(np.hypot(*np.diff(along(path, 1e9), axis=0).T).sum())
+
+
+def test_a_route_keeps_every_stop_as_a_corner():
+    brief = Brief(roughness=0.0)
+    found = steps.route(brief, steps.slopes(brief, steps.host(brief)), stops((1500, 2000), (9000, 6000), (3000, 9000)))
+    corners = [(p[0], p[1]) for p in found.paths[0]]
+    assert (1500, 2000) in corners and (9000, 6000) in corners and (3000, 9000) in corners
+    assert not found.stops
+
+
+def test_a_route_up_a_steep_slope_goes_across_it():
+    found = steps.route(SMALL, steps.slopes(SMALL, tilted(1 / 8)), stops((700, 1500), (3300, 1500)))
+    path = found.paths[0]
+    assert length(path) > 1.2 * 2600                                    # not straight up the 1:8
+    assert (3300 - 700) / 8 / length(path) < 1 / 8                     # so it climbs gentler on the way
+
+
+def test_a_route_goes_round_a_hole_with_room_for_the_path():
+    brief = Brief(roughness=0.0, length=8000.0, span=4000.0)
+    block = nodes.box(Frame([4000, 2000, 300], [1, 0, 0], [0, 1, 0]), 8000.0, 4000.0, 600.0, 0)
+    hole = nodes.cylinder(Frame([4000, 2000, 300], [1, 0, 0], [0, 1, 0]), 600.0, 1000.0)
+    roof = nodes.boolean([block, hole], "difference", 0)
+    path = steps.route(brief, steps.slopes(brief, roof), stops((1000, 2000), (7000, 2000))).paths[0]
+    clear = np.hypot(*(along(path) - [4000, 2000]).T).min()
+    assert clear >= 600 + brief.width / 2 - brief.cell                 # the hole's radius and half the path, to a cell
+
+
+def test_a_stop_without_room_for_the_path_is_refused():
+    with pytest.raises(ValueError, match="has no room for the path"):
+        steps.route(SMALL, steps.slopes(SMALL, tilted(0.0)), stops((200, 1500), (3300, 1500)))
+
+
+def test_a_route_with_no_way_through_says_so():
+    block = nodes.box(Frame([2000, 1500, 300], [1, 0, 0], [0, 1, 0]), 4000.0, 3000.0, 600.0, 0)
+    gap = nodes.box(Frame([2000, 1500, 300], [1, 0, 0], [0, 1, 0]), 400.0, 4000.0, 1000.0, 0)
+    roof = nodes.boolean([block, gap], "difference", 0)                 # cut in two, across its whole span
+    with pytest.raises(ValueError, match="No way from"):
+        steps.route(SMALL, steps.slopes(SMALL, roof), stops((700, 1500), (3300, 1500)))
+
+
+def test_a_routed_walk_never_runs_over_itself_and_can_be_walked():
+    roof = steps.host(WAVY)
+    drawing = steps.route(WAVY, steps.slopes(WAVY, roof), Drawing.sample_stops())
+    _, profiles, runs = build(WAVY, drawing)
+    counts = checks.path_clear(WAVY, runs, combine(roof, [steps.circulation(WAVY, runs)]))
+    assert counts["samples"] > 0 and counts["unsupported"] == 0 and counts["blocked"] == 0
+    assert checks.steepest(runs) <= WAVY.ramp_max + 1e-9
+
+
+def test_a_sharp_turn_is_level_as_far_as_its_arms_overlap():
+    _, profiles, _ = build(FLAT, Drawing([Polyline([[1000, 2000, 0], [9000, 2000, 0], [2000, 6000, 0]])]))
+    turn = math.acos(-7000 / math.hypot(7000, 4000))                    # about 150 degrees: arms overlap for 2.2 m
+    reach = FLAT.width / 2 * math.tan(turn / 2)
+    held = [h for h in profiles[0].holds if h[0] > 0 and h[1] < profiles[0].length]
+    assert held[0][1] - held[0][0] == pytest.approx(2 * reach)
+
+
+def test_a_path_turning_straight_back_is_refused():
+    with pytest.raises(ValueError, match="turns back on itself"):
+        build(FLAT, Drawing([Polyline([[1000, 2000, 0], [9000, 2000, 0], [2000, 2600, 0]])]))
 
 
 def test_the_ground_is_found_where_the_host_is():

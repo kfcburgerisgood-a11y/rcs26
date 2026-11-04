@@ -5,8 +5,11 @@ import numpy as np
 __all__ = ["plan", "slope_map", "profile", "section"]
 
 
-def slope_map(found, ramp_max, easy=1 / 20, contour=100.0, title="where a path could go"):
-    """The host's plan by slope: easy, a ramp, too steep, or no host; with height contours every ``contour`` mm."""
+def slope_map(found, ramp_max, drawing=None, easy=1 / 20, contour=100.0, title="where a path could go"):
+    """The host's plan by slope: easy, a ramp, too steep, or no host; with height contours every ``contour`` mm.
+
+    With a ``drawing``, its paths in blue, its stops and pins as dots.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
     from matplotlib.patches import Patch
@@ -21,6 +24,13 @@ def slope_map(found, ramp_max, easy=1 / 20, contour=100.0, title="where a path c
     labels = ["easy, under 1:{:.0f}".format(1 / easy), "a ramp, to 1:{:.0f}".format(1 / ramp_max),
               "too steep to follow", "no roof"]
     ax.legend(handles=[Patch(color=c, label=t) for c, t in zip(colours, labels)], loc="upper right", fontsize=8)
+    if drawing is not None:
+        for path in drawing.paths:
+            ax.plot([p[0] for p in path], [p[1] for p in path], color="tab:blue", lw=2.5)
+        for stops in drawing.stops:
+            ax.plot([p[0] for p in stops], [p[1] for p in stops], "o", color="black")
+        for pin in drawing.pins:
+            ax.plot(pin[0], pin[1], "o", color="tab:red", ms=8)
     share = found.walkable(ramp_max).mean()
     ax.set_title("{}: {:.0%} walkable as it is".format(title, share))
     ax.set_aspect("equal")
