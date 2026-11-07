@@ -45,7 +45,7 @@ def test_a_brief_never_allows_a_ramp_steeper_than_1_in_12():
     assert Brief(ramp_max=1 / 20).ramp_max == pytest.approx(0.05)     # gentler is fine
 
 
-SMALL = Brief(length=4000.0, span=3000.0)
+SMALL = Brief(length=4000.0, span=3000.0, edge_clearance=0.0)     # a small test roof: room only for the path
 
 
 def tilted(slope, length=4000.0, span=3000.0):
@@ -97,7 +97,7 @@ def test_a_route_keeps_every_stop_as_a_corner():
 
 
 def test_a_route_up_a_steep_slope_goes_across_it():
-    wide = Brief(length=8000.0, span=6000.0)                            # room to wind on
+    wide = Brief(length=8000.0, span=6000.0, edge_clearance=0.0)       # room to wind on
     found = steps.route(wide, steps.slopes(wide, tilted(1 / 8, 8000.0, 6000.0)), stops((700, 3000), (7300, 3000)))
     path = found.paths[0]
     assert length(path) > 1.2 * 6600                                    # not straight up the 1:8
@@ -105,7 +105,7 @@ def test_a_route_up_a_steep_slope_goes_across_it():
 
 
 def test_a_route_goes_round_a_hole_with_room_for_the_path():
-    brief = Brief(roughness=0.0, length=8000.0, span=4000.0)
+    brief = Brief(roughness=0.0, length=8000.0, span=4000.0, edge_clearance=0.0)
     block = nodes.box(Frame([4000, 2000, 300], [1, 0, 0], [0, 1, 0]), 8000.0, 4000.0, 600.0, 0)
     hole = nodes.cylinder(Frame([4000, 2000, 300], [1, 0, 0], [0, 1, 0]), 600.0, 1000.0)
     roof = nodes.boolean([block, hole], "difference", 0)
@@ -165,7 +165,7 @@ def test_a_network_grows_as_many_branches_as_asked(count):
 def test_every_branch_ends_clear_of_the_roofs_edge(brief):
     _, grown = grow(brief)
     for x, y in _tips(grown.paths, grown.entrances):
-        assert min(x, y, brief.length - x, brief.span - y) >= brief.edge_clearance - brief.cell / 2
+        assert min(x, y, brief.length - x, brief.span - y) >= brief.width / 2 + brief.edge_clearance - brief.cell
 
 
 def test_a_network_is_one_walk_from_its_entrance_split_at_every_fork():
@@ -416,6 +416,22 @@ def test_each_rest_has_a_bay_beside_it_to_stand_in():
 def test_a_climb_too_short_for_its_rests_says_so():
     with pytest.raises(ValueError, match="rest landings"):
         rested(RestBrief(rise=300.0, length=4000.0))
+
+
+@pytest.mark.parametrize("clearance", [0.0, 800.0])
+def test_a_route_keeps_its_edge_clearance_from_the_roofs_edge_all_along(clearance):
+    brief = Brief(roughness=0.0, turns=4, swing=1.0, edge_clearance=clearance)
+    path = along(crossing(brief)[1].paths[0], 50.0)
+    nearest = np.min([path[:, 0], path[:, 1], brief.length - path[:, 0], brief.span - path[:, 1]], axis=0)
+    inner = nearest[(np.hypot(*(path - [1500, 1500]).T) > 3000) & (np.hypot(*(path - [16500, 10500]).T) > 3000)]
+    assert inner.min() >= brief.width / 2 + clearance - brief.cell        # away from its two stops
+
+
+def test_lift_raises_the_walking_surface_over_what_it_follows():
+    _, profiles, _ = build(Brief(roughness=0.0, lift=10.0), straight())
+    assert profiles[0].level == pytest.approx(610.0, abs=0.05)          # the flat roof at 600, and 10 over it
+    _, profiles, _ = build(Brief(roughness=0.0, lift=10.0), straight((7000, 2000, 800)))
+    assert np.interp(6000, profiles[0].s, profiles[0].level) == pytest.approx(800.0)   # a pin stays as set
 
 
 def test_a_path_is_followed_all_the_way_to_its_end():

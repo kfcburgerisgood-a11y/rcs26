@@ -17,7 +17,7 @@ uv run python -m pytest projects/roof-circulation
 | Controlled: `Brief`, the rules every path keeps | Free: `Drawing` and the tuning numbers |
 |---|---|
 | `ramp_max`: 1:12, or gentler, never steeper (the brief refuses it) | entrances: a network grows from them; or stops to route through; or paths drawn yourself |
-| every branch end keeps `edge_clearance` from the roof's edge and holes | `branches`: how many ends a network grows to |
+| a path's edge keeps `edge_clearance` from the roof's edge and holes, all along it | `branches`: how many ends a network grows to |
 | no stairs: where 1:12 cannot be kept, `grade` says where to draw the route longer | pins: levels held where drawn, such as a lookout |
 | a level landing at every end, fork and turn sharper than 8 degrees: `width / 2`, longer where paths meet sharply; a gentler bend climbs on as it turns | `avoid_slope`: how strongly a route keeps to gentle ground |
 | a route never runs over itself, and keeps `width / 2` clear of holes and edges | `turns`: how many times a route swings side to side between stops: 0 straight, more winds more |
@@ -27,7 +27,7 @@ uv run python -m pytest projects/roof-circulation
 | | `bend`: the length bends are smoothed over: longer sweeps, shorter hugs the ground |
 | | attractors and repellers: places a route bends towards or keeps from, within `influence` (`attract`, `repel`); an attractor near a swing captures it |
 | | `width` |
-| `headroom` kept empty above, `support` kept solid below | `smoothing`: how closely the path follows the roof |
+| `headroom` kept empty above, `support` kept solid below | `smoothing`: how closely the path follows the roof; `lift`: how far it rides above it |
 | both ends meet the roof's surface | `wave`, `wavelength`: a wave along the path, of any length |
 
 The wave obeys 1:12 like everything else: it is lowered wherever it would be steeper. On a level stretch

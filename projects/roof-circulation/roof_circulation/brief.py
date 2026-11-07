@@ -40,6 +40,7 @@ class Brief:
     width: float = 1200.0           # clear walking width, at least 1200; 1500 where there is no stair beside it
     ramp_max: float = RAMP_LIMIT    # steepest the path may be: 1:12, or gentler
     smoothing: float = 3000.0       # the path follows the rock averaged over this length
+    lift: float = 0.0               # how far the walking surface rides above what it follows; pins stay as set
     spacing: float = 250.0          # the path is followed every this many mm
     depth: float = 150.0            # the path's solid reaches this far into the rock below it
     headroom: float = 2100.0        # kept empty above the walking surface
@@ -61,7 +62,7 @@ class Brief:
     influence: float = 3000.0       # how far an attractor or repeller reaches, fading to nothing
     route_tolerance: float = 300.0  # where a winding line will not fit, how far a straightened one may stray
     branches: int = 3               # how many ends a network grows to from its entrances
-    edge_clearance: float = 1500.0  # how far every path end keeps from the roof's edge and its holes
+    edge_clearance: float = 500.0   # how far a path's edge keeps from the roof's edge and holes, all along it
 
     # where to look for the host's surface, and how to sample it
     search_top: float = 6000.0      # above any roof

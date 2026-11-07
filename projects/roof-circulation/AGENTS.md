@@ -50,7 +50,7 @@ classes (a repo test enforces it). Run it after every change to it.
 | 2 | `slopes` | `steps.py` | host -> `SlopeMap` (top and slope every `cell`; holes NaN) |
 | 3a | drawn paths | `drawing.py` | `Drawing.paths` (plan polylines, Z ignored) + `pins` (points holding a level) |
 | 3b | `route` | `routing.py` | `Drawing.stops` (start, via, end) -> winding paths; `turns`, `swing`, `bend`, attractors/repellers |
-| 3c | `network` | `routing.py` | `Drawing.entrances` -> branching paths; `branches`, `edge_clearance` |
+| 3c | `network` | `routing.py` | `Drawing.entrances` -> branching paths; `branches` |
 | 4 | `ground` | `steps.py` | paths -> `Profile`s: host surface under each path; holds (level landings) at ends, turns, forks, pins |
 | 4 | `grade` | `steps.py` | walking level: ground averaged over `smoothing` + `wave`, within `ramp_max`, through holds; raises "Too steep ... Draw it longer there" with the place |
 | 4b | `rest` | `steps.py` | optional component with its own `RestBrief` (`rise`, `length`, `bay`): rest landings + bays |
@@ -93,6 +93,12 @@ alternative to the generated ones.
   `network(..., landing=None)` checks walkability with rests only when given one. Notebook Step 4b is its own cell.
 - The notebook's Step 3 also shows the free-drawn path (`Drawing.sample()`: paths + pins), so all three path
   sources are shown.
+- `edge_clearance` (default 500) is now the distance from a path's edge to the roof's edge and holes, all along
+  routes and networks (drawn paths are as drawn). `lift` raises the followed walking level, ends included;
+  pins stay as set.
+- Open with the owner: their own SubD mesh as a host (closed, mm, Z up, via `VolGrid.from_mesh`), and the
+  three questions for the team about `Contribution`: does a cut always win, which modules shape the surface
+  before circulation reads it, and moving it to compas_vol.
 
 ## Next tasks
 

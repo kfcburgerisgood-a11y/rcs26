@@ -40,12 +40,12 @@ def route(brief, found, drawing):
     --------
     >>> from roof_circulation import Brief, steps
     >>> brief = Brief(roughness=0.0, length=6000.0, span=3000.0)
-    >>> stops = Drawing(stops=[Polyline([[1000, 1500, 0], [5000, 1500, 0]])])
+    >>> stops = Drawing(stops=[Polyline([[1500, 1500, 0], [4500, 1500, 0]])])
     >>> found = route(brief, steps.slopes(brief, steps.host(brief)), stops)
     >>> line = found.paths[0]
     >>> straight = max(abs(p[1] - 1500) for p in line) <= brief.cell / 2     # on a flat roof, to within the grid
     >>> list(line[0])[:2], list(line[-1])[:2], straight
-    ([1000.0, 1500.0], [5000.0, 1500.0], True)
+    ([1500.0, 1500.0], [4500.0, 1500.0], True)
     """
     room, height = _terrain(brief, found)
     prefer = _preference(brief, found, drawing)
@@ -54,19 +54,32 @@ def route(brief, found, drawing):
         points = [(float(p[0]), float(p[1])) for p in stops]
         corners = [points[0]]
         for a, b in zip(points[:-1], points[1:]):
-            via = [a] + _turning_points(brief, found, room, a, b, prefer, drawing.attractors) + [b]
-            way = [a]
-            for p, q in zip(via[:-1], via[1:]):
+            targets = _turning_points(brief, found, room, a, b, prefer, drawing.attractors) + [b]
+            parts, k = [], 0
+            while k < len(targets):
+                p, q = (parts[-1][-1] if parts else a), targets[k]
                 # a route never runs over itself or another: what is taken is closed, a cell beyond a path's width
                 # for the smoothing to come, but around p and q, to leave by
                 clear = brief.width + brief.cell
-                free = room & (~_near(found, taken, clear) | _near(found, [[p], [q]], clear))
-                cells = _search(_graph(brief, found, free, height, prefer), free.shape, _cell(found, free, p),
-                                _cell(found, free, q), p, q)
+                free = room & (~_near(found, taken + parts, clear) | _near(found, [[p], [q]], clear))
+                try:
+                    cells = _search(_graph(brief, found, free, height, prefer), free.shape, _cell(found, free, p),
+                                    _cell(found, free, q), p, q)
+                except ValueError:
+                    # a swing only draws the route: one it cannot reach is left out, and if the stop cannot be
+                    # reached from the last swing, that swing is given up and the stop tried from the one before
+                    if q != b:
+                        k += 1
+                    elif parts:
+                        parts.pop()
+                    else:
+                        raise
+                    continue
                 part = [p] + [(float(found.x[i]), float(found.y[j])) for i, j in cells[1:-1]] + [q]
-                part = _pull(brief, found, free, height, part, prefer)     # taut between swings, not across them
-                taken.append(part)
-                way += part[1:]
+                parts.append(_pull(brief, found, free, height, part, prefer))     # taut between swings, not across
+                k += 1
+            taken += parts
+            way = [a] + [point for part in parts for point in part[1:]]
             # one smooth line from stop to stop: the swings bend it, they are not corners
             corners += _wind(brief, found, room, way)[1:]
         paths.append(Polyline([[x, y, 0.0] for x, y in corners]))
@@ -113,10 +126,10 @@ def _turning_points(brief, found, room, a, b, weight, attractors=()):
 def network(brief, roof, found, drawing, landing=None):
     """Step 3, from entrances alone: a walk that branches out over the gentle ground. *Canvas: Shortest Walk, grown.*
 
-    Reads ``branches``, ``edge_clearance``, and what ``route`` and ``grade`` read.
+    Reads ``branches``, and what ``route`` and ``grade`` read.
     Grows the walk one branch at a time from the ``roof`` and its slope map
     ``found``: each end on ground no steeper than ``ramp_max``, at least
-    ``edge_clearance`` from the roof's edge and holes, as far as it can be from
+    with room for the path, as far as it can be from
     everything walked so far; each branch leaving the walk wherever that is
     cheapest, kept from running alongside it. The walk is split at every fork,
     so each piece meets the others at its ends, and a branch is kept only if
@@ -139,12 +152,11 @@ def network(brief, roof, found, drawing, landing=None):
         raise ValueError("A network needs at least one entrance.")
     first = [np.ravel_multi_index(_cell(found, room, s), room.shape) for s in starts]
     reach = np.isfinite(_walk(graph, room.shape, first)[0])
-    edge = distance_transform_edt(np.pad(~np.isnan(found.height), 1))[1:-1, 1:-1] * brief.cell
     dx, dy = np.gradient(height, brief.cell)
-    can_end = reach & (np.hypot(dx, dy) <= brief.ramp_max) & (edge >= brief.edge_clearance)
+    can_end = reach & (np.hypot(dx, dy) <= brief.ramp_max)     # reach keeps edge_clearance already
     if not can_end.any():
-        raise ValueError("Nowhere to end a branch: no ground reachable from the entrances is gentler than 1:{:.0f} "
-                         "and {:.0f} mm from the roof's edge.".format(1 / brief.ramp_max, brief.edge_clearance))
+        raise ValueError("Nowhere to end a branch: no ground reachable from the entrances, with room for the "
+                         "path, is gentler than 1:{:.0f}.".format(1 / brief.ramp_max))
     from .steps import grade, ground, rest     # here, not at the top: steps imports this module
 
     walk, grown = [], 0
@@ -241,9 +253,9 @@ def _near(found, lines, distance):
 
 
 def _terrain(brief, found):
-    """Where a path fits, ``width / 2`` clear of holes and edges; and the roof's height, holes filled."""
+    """Where a path fits, its edge ``edge_clearance`` clear of holes and edges; and the roof's height, holes filled."""
     roof = ~np.isnan(found.height)
-    room = distance_transform_edt(np.pad(roof, 1))[1:-1, 1:-1] * brief.cell > brief.width / 2
+    room = distance_transform_edt(np.pad(roof, 1))[1:-1, 1:-1] * brief.cell > brief.width / 2 + brief.edge_clearance
     return room, np.where(roof, found.height, np.nanmean(found.height))
 
 
@@ -364,7 +376,7 @@ def _cell(found, room, point):
     i, j = int(np.abs(found.x - point[0]).argmin()), int(np.abs(found.y - point[1]).argmin())
     if not room[i, j]:
         raise ValueError("The stop at ({:.0f}, {:.0f}) has no room for the path: it is within half the path's "
-                         "width of a hole or the roof's edge.".format(*point))
+                         "width and edge_clearance of a hole or the roof's edge.".format(*point))
     return i, j
 
 

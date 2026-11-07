@@ -256,9 +256,10 @@ def _nearest(corners, at, point):
 def grade(brief, profiles):
     """Step 3: the level walked on. Never steeper than ``ramp_max``, and never stairs.
 
-    Reads ``ramp_max``, ``smoothing``, ``wave``, ``wavelength``. The level follows
-    the ground averaged over ``smoothing`` mm, plus a wave that fades out at the
-    ends; it meets the ground at both ends, keeps every pin, and is level
+    Reads ``ramp_max``, ``smoothing``, ``lift``, ``wave``, ``wavelength``. The level
+    follows the ground averaged over ``smoothing`` mm and raised by ``lift``, plus a
+    wave that fades out at the ends; it meets the ground (and lift) at both ends,
+    keeps every pin as set, and is level
     through every turn. Where it cannot do all that at ``ramp_max``, it says
     where, so the route can be drawn longer.
 
@@ -278,7 +279,7 @@ def grade(brief, profiles):
         s, total = p.s, p.length
         window = np.abs(s[:, None] - s[None, :]) <= brief.smoothing / 2
         share = np.gradient(s)[None, :] * window
-        target = (share * p.ground[None, :]).sum(axis=1) / share.sum(axis=1)
+        target = (share * p.ground[None, :]).sum(axis=1) / share.sum(axis=1) + brief.lift
         if brief.wave:
             fade = np.clip(np.minimum(s, total - s) / (brief.wavelength / 2), 0.0, 1.0)
             target = target + brief.wave * np.sin(2 * math.pi * s / brief.wavelength) * fade * fade * (3 - 2 * fade)
@@ -289,7 +290,7 @@ def grade(brief, profiles):
         order = p.holds[:2] + [h for h in p.holds[2:] if h[2] is not None] + [h for h in p.holds[2:] if h[2] is None]
         for k, (a, b, level) in enumerate(order):
             if k < 2:   # the ends: on the ground
-                level = float(p.ground[0] if k == 0 else p.ground[-1])
+                level = float(p.ground[0] if k == 0 else p.ground[-1]) + brief.lift
             here = (a + b) / 2
             r = float(np.interp(here, s, ramp))
             reach = [(c, m * abs(r - c[0])) for c in held]
