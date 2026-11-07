@@ -110,7 +110,7 @@ def _turning_points(brief, found, room, a, b, weight, attractors=()):
     return points
 
 
-def network(brief, roof, found, drawing):
+def network(brief, roof, found, drawing, landing=None):
     """Step 3, from entrances alone: a walk that branches out over the gentle ground. *Canvas: Shortest Walk, grown.*
 
     Reads ``branches``, ``edge_clearance``, and what ``route`` and ``grade`` read.
@@ -164,9 +164,11 @@ def network(brief, roof, found, drawing):
         fork, split = _fork(walk, starts, (float(found.x[cells[0][0]]), float(found.y[cells[0][1]])), brief.width)
         leg = [fork] + [(float(found.x[i]), float(found.y[j])) for i, j in cells[1:-1]] + [end]
         trial = split + [_wind(brief, found, room, leg)]
-        try:    # a branch is kept only if every piece can still be walked at ramp_max, with its rests
+        try:    # a branch is kept only if every piece can still be walked at ramp_max, with rests if given
             pieces = Drawing([Polyline([[x, y, 0.0] for x, y in line]) for line in trial])
-            rest(brief, roof, grade(brief, ground(brief, roof, pieces)), drawing)
+            profiles = grade(brief, ground(brief, roof, pieces))
+            if landing is not None:
+                rest(brief, landing, roof, profiles, drawing)
         except ValueError:
             can_end &= ~_near(found, [[end]], brief.width * 2)
             continue

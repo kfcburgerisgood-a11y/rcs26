@@ -33,7 +33,7 @@ __all__ = [
 
 OVERLAP = 1.0   # mm: neighbouring pieces overlap this much, so the seam between them never reads as a surface
 SHARPEST = 160  # degrees: a sharper turn doubles back, and its two arms would lie on each other
-MOST_RESTS = 200   # rests on one path before rest_rise is taken to be a mistake
+MOST_RESTS = 200   # rests on one path before a rest brief's rise is taken to be a mistake
 GENTLE = 8      # degrees: a bend this gentle climbs on as it turns; a sharper one is a level landing.
 # A sloping path is level across, so a bend leaves a step on its inside of slope x width / 2 x sin(bend):
 # at 8 degrees and 1:12, about 7 mm on a 1200 path, under the 10 mm path_clear allows.
@@ -50,7 +50,7 @@ class Profile:
     floor: np.ndarray       # its lowest top across the width
     holds: list             # (from s, to s, level): ends and turns held level, and pins
     level: np.ndarray = None
-    rests: list = field(default_factory=list)   # (from s, to s, side, bay bottom): rest landings, side 0 for no bay
+    rests: list = field(default_factory=list)   # (from s, to s, side, bay bottom, bay depth); side 0 for no bay
 
     @property
     def length(self):
@@ -310,32 +310,35 @@ def grade(brief, profiles):
     return result
 
 
-def rest(brief, host, profiles, drawing=None):
-    """Step 4b: a rest landing wherever a path would climb more than ``rest_rise`` without one. *Canvas: a cluster.*
+def rest(brief, landing, host, profiles, drawing=None):
+    """Step 4b, optional: a rest landing wherever a path would climb more than ``landing.rise`` without one.
 
-    Reads ``rest_rise``, ``rest_length``, ``rest_bay``, ``influence``, and what
+    *Canvas: its own component, fed a* :class:`RestBrief`; *leave it out for no rests.* Reads
+    ``landing`` (``rise``, ``length``, ``bay``), and ``influence`` and what
     ``grade`` reads. Climb is counted along one continuous climb, up or down: it
     starts again where the path turns the other way, or runs at 1:50 or gentler
-    (as steep as a landing may be) for ``rest_length`` or more. A climb too long
-    gets as few landings as divide it into parts of at most ``rest_rise``, at
+    (as steep as a landing may be) for ``length`` or more. A climb too long
+    gets as few landings as divide it into parts of at most ``rise``, at
     levels that divide it evenly; each goes where there is room to climb to it and
     on from it, by the drawing's attractor if one is near, else on the flattest
     ground. The path is graded again and the next climb found, until none climbs
-    too far. Each landing gets a bay ``rest_bay`` deep beside it, on whichever side
+    too far. Each landing gets a bay ``bay`` deep beside it, on whichever side
     needs less cut and fill. Returns the profiles, graded, with their rests;
-    ``rest_rise = 0`` leaves them be.
+    ``rise = 0`` leaves them be.
 
     Examples
     --------
     >>> from compas.geometry import Point, Polyline
     >>> from roof_circulation import Brief, Drawing
-    >>> brief = Brief(roughness=0.0, rest_rise=300.0)
+    >>> from roof_circulation import RestBrief
+    >>> brief = Brief(roughness=0.0)
     >>> drawing = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1050)])
-    >>> profile = rest(brief, host(brief), grade(brief, ground(brief, host(brief), drawing)))[0]
+    >>> roof = host(brief)
+    >>> profile = rest(brief, RestBrief(rise=300.0), roof, grade(brief, ground(brief, roof, drawing)))[0]
     >>> len(profile.rests)                  # 450 up and 450 down, a rest every 300: one each way
     2
     """
-    if brief.rest_rise <= 0:
+    if landing.rise <= 0:
         return profiles
     lures = list(drawing.attractors) if drawing is not None else []
     result = []
@@ -345,30 +348,30 @@ def rest(brief, host, profiles, drawing=None):
                        + [(a, level) for a, b, level in p.holds[2:] if level is not None and a == b])
         held, rests = replace(p, rests=[]), []
         for foot, head in zip(fixed[:-1], fixed[1:]):
-            held, rests = _place(brief, host, held, rests, foot, head, lures)
+            held, rests = _place(brief, landing, host, held, rests, foot, head, lures)
         p = replace(grade(brief, [held])[0], rests=rests)
         # then wherever following the ground still climbs too far
         for _ in range(MOST_RESTS):
-            climb = _long_climb(brief, p)
+            climb = _long_climb(landing, p)
             if climb is None:
                 break
-            held, rests = _place(brief, host, p, list(p.rests), *climb, lures)
+            held, rests = _place(brief, landing, host, p, list(p.rests), *climb, lures)
             p = replace(grade(brief, [held])[0], rests=rests)
         else:
-            raise ValueError("More than {} rests on one path: is rest_rise too small?".format(MOST_RESTS))
+            raise ValueError("More than {} rests on one path: is the rise too small?".format(MOST_RESTS))
         result.append(p)
     return result
 
 
-def _place(brief, host, held, rests, foot, head, lures):
+def _place(brief, landing, host, held, rests, foot, head, lures):
     """Rests on the climb from ``foot`` to ``head``, each ``(s, level)``: as few as divide it into parts of at most
-    ``rest_rise``, at levels dividing it evenly, each where there is ramp to climb to it and on past the rest.
+    ``rise``, at levels dividing it evenly, each where there is ramp to climb to it and on past the rest.
 
     Returns the profile held at them, ungraded, and the rests so far.
     """
     (s0, z0), (s1, z1) = foot, head
     m = brief.ramp_max
-    n = int(math.ceil(abs(z1 - z0) / brief.rest_rise - 1e-9)) - 1     # as few as will do
+    n = int(math.ceil(abs(z1 - z0) / landing.rise - 1e-9)) - 1     # as few as will do
     after = s0
     for k in range(1, n + 1):
         level = z0 + (z1 - z0) * k / (n + 1)
@@ -376,22 +379,22 @@ def _place(brief, host, held, rests, foot, head, lures):
         flats = _merged([(a, b) for a, b, _ in held.holds if a < b])
         ramp = held.s - sum(np.clip(held.s - a, 0.0, b - a) for a, b in flats)
         lo = np.interp(s0, held.s, ramp) + abs(level - z0) / m
-        hi = np.interp(s1, held.s, ramp) - abs(z1 - level) / m - (n - k + 1) * brief.rest_length
-        clear = np.array([all(s + brief.rest_length <= a or s >= b for a, b in flats) for s in held.s])
+        hi = np.interp(s1, held.s, ramp) - abs(z1 - level) / m - (n - k + 1) * landing.length
+        clear = np.array([all(s + landing.length <= a or s >= b for a, b in flats) for s in held.s])
         fits = (ramp >= lo - 1e-6) & (ramp <= hi + 1e-6) & (held.s >= after - 1e-6) & clear
         if not fits.any():
-            have = np.interp(s1, held.s, ramp) - np.interp(s0, held.s, ramp) - n * brief.rest_length
+            have = np.interp(s1, held.s, ramp) - np.interp(s0, held.s, ramp) - n * landing.length
             raise ValueError(_too_steep(held, (s0, 0.0, z0), (s1, have, z1), m)
-                             + " That is with {} rest landings of {:.0f}.".format(n, brief.rest_length))
-        start = _rest_at(brief, held, held.s[fits], lures)
-        after = start + brief.rest_length
-        rests = rests + [(start, after) + _bay(brief, host, held, (start + after) / 2, level)]
+                             + " That is with {} rest landings of {:.0f}.".format(n, landing.length))
+        start = _rest_at(brief, landing, held, held.s[fits], lures)
+        after = start + landing.length
+        rests = rests + [(start, after) + _bay(brief, landing, host, held, (start + after) / 2, level)]
         held = _held(held, start, after, level)
     return held, rests
 
 
-def _long_climb(brief, p):
-    """The first climb that rises more than ``rest_rise``: ``((s, level) at its foot, (s, level) at its head)``.
+def _long_climb(landing, p):
+    """The first climb that rises more than ``rise``: ``((s, level) at its foot, (s, level) at its head)``.
 
     The foot is where the level stretch below it begins and the head where the
     one above it ends: the climb may use all of the way between.
@@ -402,7 +405,7 @@ def _long_climb(brief, p):
         return i
 
     def climb(a, b):
-        if abs(p.level[b] - p.level[a]) > brief.rest_rise + 1e-6:
+        if abs(p.level[b] - p.level[a]) > landing.rise + 1e-6:
             b = level_from(b)
             return (p.s[a], p.level[a]), (p.s[b], p.level[b])
         return None
@@ -412,7 +415,7 @@ def _long_climb(brief, p):
         ds, dz = p.s[i + 1] - p.s[i], p.level[i + 1] - p.level[i]
         if abs(dz) <= ds / 50 + 1e-9:         # as steep as a landing may be
             flat = i if flat is None else flat
-            if sign and p.s[i + 1] - p.s[flat] >= brief.rest_length - 1e-6:     # a long enough rest ends it
+            if sign and p.s[i + 1] - p.s[flat] >= landing.length - 1e-6:     # a long enough rest ends it
                 found = climb(start, flat)
                 if found:
                     return found
@@ -430,13 +433,13 @@ def _long_climb(brief, p):
     return climb(start, len(p.s) - 1) if sign else None
 
 
-def _rest_at(brief, p, where, lures):
+def _rest_at(brief, landing, p, where, lures):
     """Which of ``where`` a rest landing starts at: by an attractor if one is near, else on the flattest ground."""
     x, y = np.interp(where, p.s, p.x), np.interp(where, p.s, p.y)
     near = [d for d in (np.hypot(x - q[0], y - q[1]) for q in lures) if d.min() <= brief.influence]
     if near:
         return float(where[min(near, key=lambda d: d.min()).argmin()])
-    rise = np.abs(np.interp(where + brief.rest_length, p.s, p.ground) - np.interp(where, p.s, p.ground))
+    rise = np.abs(np.interp(where + landing.length, p.s, p.ground) - np.interp(where, p.s, p.ground))
     return float(where[rise.argmin()])
 
 
@@ -448,24 +451,24 @@ def _held(p, a, b, level=None):
                    holds=p.holds + [(a, b, level)], level=None)
 
 
-def _bay(brief, host, p, s, level):
+def _bay(brief, landing, host, p, s, level):
     """Which side of the path a rest's bay goes, and how low it reaches: ``(side, bottom)``, side 0 for none.
 
     The side whose ground lies nearer the landing's level, so less is cut or filled; never off the host.
     """
-    if brief.rest_bay <= 0:
-        return 0, None
+    if landing.bay <= 0:
+        return 0, None, 0.0
     i = int(np.clip(np.searchsorted(p.s, s), 1, len(p.s) - 1))
     dx, dy = p.x[i] - p.x[i - 1], p.y[i] - p.y[i - 1]
     nx, ny = -dy / math.hypot(dx, dy), dx / math.hypot(dx, dy)
     x, y = np.interp(s, p.s, p.x), np.interp(s, p.s, p.y)
     best = (math.inf, 0, None)
     for side in (1, -1):
-        reach = np.array([brief.width / 2 + brief.rest_bay / 2, brief.width / 2 + brief.rest_bay])
+        reach = np.array([brief.width / 2 + landing.bay / 2, brief.width / 2 + landing.bay])
         top = _surface(brief, host, x + side * reach * nx, y + side * reach * ny, holes=True)
         if not np.isnan(top).any() and abs(top[0] - level) < best[0]:
             best = (abs(top[0] - level), side, float(min(top.min(), level)) - brief.depth)
-    return best[1], best[2]
+    return best[1], best[2], landing.bay
 
 
 def _merged(spans):
@@ -491,9 +494,9 @@ def _too_steep(p, one, other, m):
 def segments(brief, profiles):
     """Each graded path as straight pieces, one per slope, each reaching ``depth`` into the host below it.
 
-    Reads ``depth``, ``width``, ``rest_length``, ``rest_bay``. Returns one list of
-    :class:`Segment` per path, then one per rest bay: a level piece ``rest_bay``
-    wide beside its landing, rounded at its ends, ``rest_length`` long in all.
+    Reads ``depth``, ``width``. Returns one list of :class:`Segment` per path,
+    then one per rest bay: a level piece as wide as the bay is deep, beside its
+    landing, rounded at its ends, as long as the landing in all.
     """
     result = []
     for p in profiles:
@@ -508,17 +511,17 @@ def segments(brief, profiles):
                 runs.append(seg)
         result.append(runs)
     for p in profiles:
-        for a, b, side, bottom in p.rests:
+        for a, b, side, bottom, bay in p.rests:
             if not side:
                 continue
-            mid, half = (a + b) / 2, max(b - a - brief.rest_bay, 2.0) / 2   # its round ends make up the rest
+            mid, half = (a + b) / 2, max(b - a - bay, 2.0) / 2   # its round ends make up the rest
             dx, dy = np.interp(b, p.s, p.x) - np.interp(a, p.s, p.x), np.interp(b, p.s, p.y) - np.interp(a, p.s, p.y)
             ux, uy = dx / math.hypot(dx, dy), dy / math.hypot(dx, dy)
-            aside = side * ((brief.width + brief.rest_bay) / 2 - OVERLAP)
+            aside = side * ((brief.width + bay) / 2 - OVERLAP)
             x, y = np.interp(mid, p.s, p.x) - uy * aside, np.interp(mid, p.s, p.y) + ux * aside
             level = float(np.interp(mid, p.s, p.level))
             result.append([Segment((x - ux * half, y - uy * half, level), (x + ux * half, y + uy * half, level),
-                                   bottom, brief.rest_bay)])
+                                   bottom, bay)])
     return result
 
 
@@ -618,7 +621,7 @@ def extent(brief, profiles):
 
     Before the grade, the paths are taken at the ground's height.
     """
-    r = brief.width / 2 + max(brief.rest_bay, 0.0)     # a bay may stand beside the path
+    r = brief.width / 2 + max([rest[4] for p in profiles for rest in p.rests] + [0.0])   # bays beside paths
     xs = np.concatenate([[0.0, brief.length]] + [np.concatenate([p.x - r, p.x + r]) for p in profiles])
     ys = np.concatenate([[0.0, brief.span]] + [np.concatenate([p.y - r, p.y + r]) for p in profiles])
     zs = np.concatenate([[0.0, brief.thickness + brief.roughness]] +

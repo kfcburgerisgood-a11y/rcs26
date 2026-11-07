@@ -53,7 +53,7 @@ classes (a repo test enforces it). Run it after every change to it.
 | 3c | `network` | `routing.py` | `Drawing.entrances` -> branching paths; `branches`, `edge_clearance` |
 | 4 | `ground` | `steps.py` | paths -> `Profile`s: host surface under each path; holds (level landings) at ends, turns, forks, pins |
 | 4 | `grade` | `steps.py` | walking level: ground averaged over `smoothing` + `wave`, within `ramp_max`, through holds; raises "Too steep ... Draw it longer there" with the place |
-| 4b | `rest` | `steps.py` | rest landings + bays (`rest_rise`, `rest_length`, `rest_bay`); optional |
+| 4b | `rest` | `steps.py` | optional component with its own `RestBrief` (`rise`, `length`, `bay`): rest landings + bays |
 | 5 | `segments` | `steps.py` | profiles -> straight pieces (`Segment`), plus one list per rest bay |
 | 5 | `circulation` | `steps.py` | -> `Contribution(add, cut, keep)` (`contribution.py`); `combine(host, [...])` |
 | 6 | checks | `checks.py` | `steepest`, `cut_and_fill`, `path_clear` (floor underfoot, nothing overhead, no lip over 10 mm) |
@@ -86,18 +86,18 @@ alternative to the generated ones.
 - Never weaken a test to pass; if a threshold was wrong, say why in the reply (the owner reads them).
 - Before saying something works: ruff, the project tests, the notebook; for geometry, render it and look.
 
-## Next tasks (the owner's latest requests, not started)
+## Done since the handoff
 
-1. **Make rest landings a separate, optional step with its own numbers.** `rest()` is already its own step, but
-   `rest_rise`, `rest_length`, `rest_bay` live in `Brief` beside `width`. The owner wants them apart: `width` is set
-   in the first step; the rest step is one component that can be left out. Suggested: a small `RestBrief`
-   dataclass (same pattern as `Brief`: defaults, `to_dict`/`from_dict`/validation) passed to `rest()`, rest fields
-   removed from `Brief`; update `network` (it calls `rest` in its walkability check: take it as optional),
-   tests, notebook (Step 4b), README. Confirm the design with the owner before changing signatures.
-2. **Keep the free-drawn path branch visible**: the notebook's Step 3 shows only `route`; add a short alternative
-   (drawn `paths` + `pins`, as `Drawing.sample()`), so all three path sources are shown.
-3. Known limits, ask before fixing: `turns` with a middle stop (`Drawing.sample_lookout`) crowds swings round the
+- Rest landings are a separate, optional step: `rest(brief, landing, host, profiles, drawing)` takes its own
+  `RestBrief(rise, length, bay)`; `Brief` keeps `width` and no rest numbers; each rest records its bay depth;
+  `network(..., landing=None)` checks walkability with rests only when given one. Notebook Step 4b is its own cell.
+- The notebook's Step 3 also shows the free-drawn path (`Drawing.sample()`: paths + pins), so all three path
+  sources are shown.
+
+## Next tasks
+
+1. Known limits, ask before fixing: `turns` with a middle stop (`Drawing.sample_lookout`) crowds swings round the
    stop and runs out of ramp; `route` on `sample_stops` with `turns` can box the way back in; end and turn landings
    are `width/2` long while the code asks 1500 x 1500 (offered, owner has not decided); default `width` is 1200,
    the code asks 1500 where there is no stair (the notebook uses 1500).
-4. Later, only when asked: Grasshopper components (follow `projects/roof/docs/development.md`); a PR description.
+2. Later, only when asked: Grasshopper components (follow `projects/roof/docs/development.md`); a PR description.

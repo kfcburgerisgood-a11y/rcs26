@@ -4,7 +4,7 @@ import dataclasses
 import json
 from dataclasses import dataclass
 
-__all__ = ["Brief", "RAMP_LIMIT"]
+__all__ = ["Brief", "RestBrief", "RAMP_LIMIT"]
 
 RAMP_LIMIT = 1 / 12     # the steepest a ramp may ever be: no brief may ask for more
 WIDTH_LEAST = 1200.0    # the narrowest a path may be
@@ -44,11 +44,6 @@ class Brief:
     depth: float = 150.0            # the path's solid reaches this far into the rock below it
     headroom: float = 2100.0        # kept empty above the walking surface
     support: float = 300.0          # below the walking surface, no later process may remove
-
-    # rest landings, by code every 750 of climb, 1500 long; 0 rise for none
-    rest_rise: float = 750.0        # the most a path climbs between rests
-    rest_length: float = 1500.0     # each rest landing's length along the path
-    rest_bay: float = 1500.0        # a bay beside each, this deep, to sit or turn a wheelchair: 0 for none
 
     # the wave along the path, fading out at its ends; lowered wherever it would pass ramp_max
     wave: float = 0.0               # height of the wave: 0 for none
@@ -103,3 +98,32 @@ class Brief:
     def load(cls, path):
         with open(path, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
+
+
+@dataclass
+class RestBrief:
+    """The numbers of the rest landings step, apart from the brief: leave the step out, and there are none.
+
+    By code a ramp rests every 750 of climb on a landing 1500 long.
+
+    Examples
+    --------
+    >>> landing = RestBrief(rise=300.0)
+    >>> RestBrief.from_dict(landing.to_dict()) == landing
+    True
+    """
+
+    rise: float = 750.0             # the most a path climbs between rests: 0 for none
+    length: float = 1500.0          # each rest landing's length along the path
+    bay: float = 1500.0             # a bay beside each, this deep, to sit in or turn a wheelchair: 0 for none
+
+    def to_dict(self):
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, data):
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = set(data) - known
+        if unknown:
+            raise ValueError("Not in the rest brief: {}".format(", ".join(sorted(unknown))))
+        return cls(**data)

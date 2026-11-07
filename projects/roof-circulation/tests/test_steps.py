@@ -10,7 +10,7 @@ from compas.geometry import Frame, Plane, Point, Polyline
 from compas_vol import nodes
 from compas_vol.meshing import is_watertight
 from compas_vol.primitives import VolPlane
-from roof_circulation import Brief, Contribution, Drawing, checks, combine, steps
+from roof_circulation import Brief, Contribution, Drawing, RestBrief, checks, combine, steps
 from roof_circulation.routing import _tips
 
 FLAT = Brief(roughness=0.0)             # the roof's top at 600 everywhere: levels are known
@@ -339,9 +339,12 @@ def test_a_gentle_bend_climbs_on_and_a_sharper_one_is_a_landing(bend, landing):
 HILL = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1050)])   # 450 up, 450 down
 
 
-def rested(brief, drawing=HILL):
+FLAT_HILL = Brief(roughness=0.0)
+
+
+def rested(landing, drawing=HILL, brief=FLAT_HILL):
     roof = steps.host(brief)
-    profiles = steps.rest(brief, roof, steps.grade(brief, steps.ground(brief, roof, drawing)), drawing)
+    profiles = steps.rest(brief, landing, roof, steps.grade(brief, steps.ground(brief, roof, drawing)), drawing)
     return roof, profiles, steps.segments(brief, profiles)
 
 
@@ -351,47 +354,68 @@ def test_a_path_is_at_least_1200_wide():
     assert Brief(width=1500.0).width == 1500.0
 
 
-def test_a_long_climb_rests_every_rest_rise_on_a_level_landing():
-    brief = Brief(roughness=0.0, rest_rise=300.0)
-    _, profiles, _ = rested(brief)
+def test_rest_numbers_are_their_own_apart_from_the_brief():
+    assert not any(name.startswith("rest") for name in Brief().to_dict())
+    with pytest.raises(ValueError, match="Not in the rest brief"):
+        RestBrief.from_dict({"width": 1500})
+
+
+def test_a_long_climb_rests_every_rise_on_a_level_landing():
+    landing = RestBrief(rise=300.0)
+    _, profiles, _ = rested(landing)
     p = profiles[0]
     assert len(p.rests) == 2                                            # one on the way up, one down
-    for a, b, _, _ in p.rests:
-        assert b - a == pytest.approx(brief.rest_length)
+    for a, b, *_ in p.rests:
+        assert b - a == pytest.approx(landing.length)
         inside = (p.s >= a - 1e-6) & (p.s <= b + 1e-6)
         assert np.ptp(p.level[inside]) == pytest.approx(0.0, abs=1e-6)
         assert np.interp((a + b) / 2, p.s, p.level) == pytest.approx(825.0)   # halfway up the 450
-    assert steps._long_climb(brief, p) is None                          # nothing left climbs too far
+    assert steps._long_climb(landing, p) is None                        # nothing left climbs too far
 
 
-def test_no_rests_when_rest_rise_is_zero_or_no_climb_is_long_enough():
-    assert not rested(Brief(roughness=0.0, rest_rise=0.0))[1][0].rests
-    assert not rested(Brief(roughness=0.0, rest_rise=500.0))[1][0].rests    # 450 up, then down: counted apart
+def test_a_network_checks_its_branches_with_rests_only_when_given_them():
+    brief = Brief(roughness=0.0, branches=2)
+    roof = steps.host(brief)
+    found = steps.slopes(brief, roof)
+    for landing in (None, RestBrief()):
+        grown = steps.network(brief, roof, found, Drawing.sample_entrance(), landing)
+        assert len(_tips(grown.paths, grown.entrances)) == 2
+
+
+def test_leaving_the_rest_step_out_leaves_the_path_without_rests():
+    roof = steps.host(FLAT_HILL)
+    profiles = steps.grade(FLAT_HILL, steps.ground(FLAT_HILL, roof, HILL))
+    assert not profiles[0].rests and len(steps.segments(FLAT_HILL, profiles)) == 1
+
+
+def test_no_rests_when_the_rise_is_zero_or_no_climb_is_long_enough():
+    assert not rested(RestBrief(rise=0.0))[1][0].rests
+    assert not rested(RestBrief(rise=500.0))[1][0].rests                # 450 up, then down: counted apart
 
 
 def test_a_rest_goes_by_an_attractor_near_where_it_may():
-    brief = Brief(roughness=0.0, rest_rise=300.0)
-    plain = rested(brief)[1][0].rests[0][0]
+    landing = RestBrief(rise=300.0)
+    plain = rested(landing)[1][0].rests[0][0]
     lured = Drawing(list(HILL.paths), list(HILL.pins), attractors=[Point(5500, 2000, 0)])
-    assert rested(brief, lured)[1][0].rests[0][0] > plain + 200
+    assert rested(landing, lured)[1][0].rests[0][0] > plain + 200
 
 
 def test_each_rest_has_a_bay_beside_it_to_stand_in():
-    brief = Brief(roughness=0.0, rest_rise=300.0)
-    roof, profiles, runs = rested(brief)
+    landing = RestBrief(rise=300.0)
+    roof, profiles, runs = rested(landing)
     bays = runs[1:]
-    assert len(bays) == 2 and all(r[0].width == brief.rest_bay for r in bays)
+    assert len(bays) == 2 and all(r[0].width == landing.bay for r in bays)
     x, y, level = bays[0][0].start
-    assert abs(y - 2000) == pytest.approx((brief.width + brief.rest_bay) / 2 - steps.OVERLAP)
-    solid = combine(roof, [steps.circulation(brief, runs)])
+    assert abs(y - 2000) == pytest.approx((FLAT_HILL.width + landing.bay) / 2 - steps.OVERLAP)
+    solid = combine(roof, [steps.circulation(FLAT_HILL, runs)])
     assert solid.get_distance([x, y, level - 50]) < 0                   # floor
     assert solid.get_distance([x, y, level + 1000]) > 0                 # open above
-    assert len(rested(Brief(roughness=0.0, rest_rise=300.0, rest_bay=0.0))[2]) == 1
+    assert len(rested(RestBrief(rise=300.0, bay=0.0))[2]) == 1
 
 
 def test_a_climb_too_short_for_its_rests_says_so():
     with pytest.raises(ValueError, match="rest landings"):
-        rested(Brief(roughness=0.0, rest_rise=300.0, rest_length=4000.0))
+        rested(RestBrief(rise=300.0, length=4000.0))
 
 
 def test_a_path_is_followed_all_the_way_to_its_end():

@@ -69,7 +69,7 @@ def profile(profiles, title="along each path"):
     for p in profiles:
         ax.fill_between(p.s, p.ground, min(p.ground.min(), p.level.min()) - 200, color="0.85", label="host")
         ax.plot(p.s, p.level, color="tab:blue", label="walking level")
-        for a, b, _, _ in p.rests:
+        for a, b, *_ in p.rests:
             ax.axvspan(a, b, color="tab:green", alpha=0.25, lw=0)
         for a, b, level in p.holds:
             if level is not None and a == b:
