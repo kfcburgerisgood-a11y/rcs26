@@ -530,6 +530,13 @@ def test_a_path_below_the_surface_cuts_its_way_through():
     assert solid.get_distance([7000, 4000, 500]) < 0                   # beside it: still roof
 
 
+def test_a_path_cut_deeper_than_depth_still_stands_on_its_own_solid():
+    _, _, runs = build(FLAT, straight((7000, 2000, 300)))              # 300 into a roof at 600, depth 150
+    walk = steps.circulation(FLAT, runs).add
+    assert walk.get_distance([7000, 2000, 300 - 50]) < 0               # solid just under the walking surface
+    assert walk.get_distance([7000, 2000, 300 - FLAT.depth - 50]) > 0  # and no deeper than depth under it
+
+
 def test_cut_and_fill_measure_how_far_the_path_leaves_the_surface():
     _, profiles, _ = build(FLAT, straight())
     assert checks.cut_and_fill(profiles) == pytest.approx({"cut": 0.0, "fill": 0.0}, abs=0.05)

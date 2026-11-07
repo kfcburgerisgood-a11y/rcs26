@@ -54,37 +54,63 @@ def route(brief, found, drawing):
         points = [(float(p[0]), float(p[1])) for p in stops]
         corners = [points[0]]
         for a, b in zip(points[:-1], points[1:]):
-            targets = _turning_points(brief, found, room, a, b, prefer, drawing.attractors) + [b]
-            parts, k = [], 0
-            while k < len(targets):
-                p, q = (parts[-1][-1] if parts else a), targets[k]
-                # a route never runs over itself or another: what is taken is closed, a cell beyond a path's width
-                # for the smoothing to come, but around p and q, to leave by
-                clear = brief.width + brief.cell
-                free = room & (~_near(found, taken + parts, clear) | _near(found, [[p], [q]], clear))
-                try:
-                    cells = _search(_graph(brief, found, free, height, prefer), free.shape, _cell(found, free, p),
-                                    _cell(found, free, q), p, q)
-                except ValueError:
-                    # a swing only draws the route: one it cannot reach is left out, and if the stop cannot be
-                    # reached from the last swing, that swing is given up and the stop tried from the one before
-                    if q != b:
-                        k += 1
-                    elif parts:
-                        parts.pop()
-                    else:
-                        raise
-                    continue
-                part = [p] + [(float(found.x[i]), float(found.y[j])) for i, j in cells[1:-1]] + [q]
-                parts.append(_pull(brief, found, free, height, part, prefer))     # taut between swings, not across
-                k += 1
+            swings = _turning_points(brief, found, room, a, b, prefer, drawing.attractors)
+            while True:
+                parts = _leg(brief, found, room, height, prefer, taken, a, swings + [b])
+                # one smooth line from stop to stop: the swings bend it, they are not corners
+                line = _wind(brief, found, room, [a] + [point for part in parts for point in part[1:]])
+                knot = _overlap(brief, line)
+                if knot is None or not swings:
+                    break
+                # smoothed, it runs over itself: give up the swing that led it there, and find the way again
+                swings.remove(min(swings, key=lambda s: math.hypot(s[0] - knot[0], s[1] - knot[1])))
             taken += parts
-            way = [a] + [point for part in parts for point in part[1:]]
-            # one smooth line from stop to stop: the swings bend it, they are not corners
-            corners += _wind(brief, found, room, way)[1:]
+            corners += line[1:]
         paths.append(Polyline([[x, y, 0.0] for x, y in corners]))
     return Drawing(paths, list(drawing.pins), [], list(drawing.entrances), list(drawing.attractors),
                    list(drawing.repellers))
+
+
+def _leg(brief, found, room, height, prefer, taken, a, targets):
+    """The way from ``a`` through ``targets`` (swings, then the stop), as pieces pulled taut, keeping off ``taken``."""
+    stop, parts, k = targets[-1], [], 0
+    while k < len(targets):
+        p, q = (parts[-1][-1] if parts else a), targets[k]
+        # a route never runs over itself or another: what is taken is closed, a cell beyond a path's width
+        # for the smoothing to come; open all round p, to leave the leg before, and round q only enough to arrive
+        clear = brief.width + brief.cell
+        leave = _near(found, [[p]], clear) | _near(found, [[q]], brief.width / 2 + brief.cell)
+        free = room & (~_near(found, taken + parts, clear) | leave)
+        try:
+            cells = _search(_graph(brief, found, free, height, prefer), free.shape, _cell(found, free, p),
+                            _cell(found, free, q), p, q)
+        except ValueError:
+            # a swing only draws the route: one it cannot reach is left out, and if the stop cannot be
+            # reached from the last swing, that swing is given up and the stop tried from the one before
+            if q != stop:
+                k += 1
+            elif parts:
+                parts.pop()
+            else:
+                raise
+            continue
+        part = [p] + [(float(found.x[i]), float(found.y[j])) for i, j in cells[1:-1]] + [q]
+        parts.append(_pull(brief, found, free, height, part, prefer))     # taut between swings, not across
+        k += 1
+    return parts
+
+
+def _overlap(brief, line):
+    """A plan point where a smoothed line comes back within a path's width of itself, or None.
+
+    Points less than two widths apart along the line are neighbours on a bend, not an overlap.
+    """
+    points = np.array(line)
+    along = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(points, axis=0).T))])
+    near = np.hypot(*(points[:, None, :] - points[None, :, :]).transpose(2, 0, 1)) < brief.width
+    apart = np.abs(along[:, None] - along[None, :]) > 2 * brief.width
+    i, _ = np.nonzero(near & apart)
+    return tuple(points[i[0]]) if len(i) else None
 
 
 def _turning_points(brief, found, room, a, b, weight, attractors=()):

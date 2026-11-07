@@ -503,7 +503,8 @@ def segments(brief, profiles):
     for p in profiles:
         runs = []
         for i in range(len(p.s) - 1):
-            bottom = min(p.floor[i], p.floor[i + 1]) - brief.depth
+            # depth under the host or under the walking surface, whichever is lower: a deep cut stands on its own too
+            bottom = min(p.floor[i], p.floor[i + 1], p.level[i], p.level[i + 1]) - brief.depth
             seg = Segment((p.x[i], p.y[i], p.level[i]), (p.x[i + 1], p.y[i + 1], p.level[i + 1]), bottom)
             last = runs[-1] if runs else None
             if last and _same_line(last, seg):
