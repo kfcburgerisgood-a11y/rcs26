@@ -336,7 +336,7 @@ def test_a_gentle_bend_climbs_on_and_a_sharper_one_is_a_landing(bend, landing):
     assert (len(profiles[0].holds) > 2) == landing                      # beyond the two ends
 
 
-HILL = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1050)])   # 450 up, 450 down
+HILL = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1000)])   # 400 up, 400 down
 
 
 FLAT_HILL = Brief(roughness=0.0)
@@ -369,7 +369,7 @@ def test_a_long_climb_rests_every_rise_on_a_level_landing():
         assert b - a == pytest.approx(landing.length)
         inside = (p.s >= a - 1e-6) & (p.s <= b + 1e-6)
         assert np.ptp(p.level[inside]) == pytest.approx(0.0, abs=1e-6)
-        assert np.interp((a + b) / 2, p.s, p.level) == pytest.approx(825.0)   # halfway up the 450
+        assert np.interp((a + b) / 2, p.s, p.level) == pytest.approx(800.0)   # halfway up the 400
     assert steps._long_climb(landing, p) is None                        # nothing left climbs too far
 
 
@@ -390,13 +390,14 @@ def test_leaving_the_rest_step_out_leaves_the_path_without_rests():
 
 def test_no_rests_when_the_rise_is_zero_or_no_climb_is_long_enough():
     assert not rested(RestBrief(rise=0.0))[1][0].rests
-    assert not rested(RestBrief(rise=500.0))[1][0].rests                # 450 up, then down: counted apart
+    assert not rested(RestBrief(rise=500.0))[1][0].rests                # 400 up, then down: counted apart
 
 
 def test_a_rest_goes_by_an_attractor_near_where_it_may():
     landing = RestBrief(rise=300.0)
-    plain = rested(landing)[1][0].rests[0][0]
-    lured = Drawing(list(HILL.paths), list(HILL.pins), attractors=[Point(5500, 2000, 0)])
+    low = Drawing(list(HILL.paths), [Point(9000, 2000, 950)])          # 350 up: room to choose where to rest
+    plain = rested(landing, low)[1][0].rests[0][0]
+    lured = Drawing(list(HILL.paths), list(low.pins), attractors=[Point(5500, 2000, 0)])
     assert rested(landing, lured)[1][0].rests[0][0] > plain + 200
 
 
@@ -528,6 +529,20 @@ def test_a_path_below_the_surface_cuts_its_way_through():
     solid = combine(rock, [steps.circulation(FLAT, runs)])
     assert solid.get_distance([7000, 2000, 500]) > 0                   # over the path: open
     assert solid.get_distance([7000, 4000, 500]) < 0                   # beside it: still roof
+
+
+def test_every_end_and_turn_has_a_platform_1500_by_1500_however_narrow_the_path():
+    narrow = Brief(roughness=0.0, width=1200.0)
+    corner = Drawing([Polyline([[1000, 2000, 0], [9000, 2000, 0], [9000, 9000, 0]])], [Point(9000, 2000, 950)])
+    _, profiles, runs = build(narrow, corner)
+    holds = profiles[0].holds
+    assert holds[0][1] - holds[0][0] >= 1500 and holds[1][1] - holds[1][0] >= 1500   # each end, along the path
+    turn = [h for h in holds[2:] if h[2] is None][0]
+    assert turn[1] - turn[0] == pytest.approx(1500)                                 # the 90 degree turn: 750 each way
+    walk = steps.circulation(narrow, runs).add
+    level = profiles[0].level[0]
+    assert walk.get_distance([1000, 2000 + 700, level - 20]) < 0                    # wider than the 1200 path
+    assert walk.get_distance([1000, 2000 + 800, level - 20]) > 0                    # 1500 across
 
 
 def test_a_path_cut_deeper_than_depth_still_stands_on_its_own_solid():

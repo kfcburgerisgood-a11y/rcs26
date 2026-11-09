@@ -19,7 +19,7 @@ uv run python -m pytest projects/roof-circulation
 | `ramp_max`: 1:12, or gentler, never steeper (the brief refuses it) | entrances: a network grows from them; or stops to route through; or paths drawn yourself |
 | a path's edge keeps `edge_clearance` from the roof's edge and holes, all along it | `branches`: how many ends a network grows to |
 | no stairs: where 1:12 cannot be kept, `grade` says where to draw the route longer | pins: levels held where drawn, such as a lookout |
-| a level landing at every end, fork and turn sharper than 8 degrees: `width / 2`, longer where paths meet sharply; a gentler bend climbs on as it turns | `avoid_slope`: how strongly a route keeps to gentle ground |
+| by code, a level platform 1500 x 1500 at every end, fork and turn sharper than 8 degrees, however narrow the path; longer where paths meet sharply; a gentler bend climbs on as it turns | `avoid_slope`: how strongly a route keeps to gentle ground |
 | a route never runs over itself, and keeps `width / 2` clear of holes and edges | `turns`: how many times a route swings side to side between stops: 0 straight, more winds more |
 | a route turns no more than it gains by: every turn costs walking | `swing`: how far each swing goes aside |
 | `width` at least 1200; 1500 by code where there is no stair beside it | `RestBrief`, the optional rest step's own: `rise` between rests (750 by code), `length` (1500), `bay` beside each |

@@ -67,8 +67,9 @@ alternative to the generated ones.
 ## Rules and why (do not loosen without asking)
 
 - 1:12 is the steepest a path ever is, and **there are no stairs** (accessibility). `ramp_max` may be gentler.
-- Every turn sharper than `GENTLE` (8 degrees) and every end and fork is held level as far as the arms overlap
-  (`width/2 * max(1, tan(turn/2))`); gentler bends climb as they turn, pieces mitred. 8 degrees keeps the step on a
+- Every turn sharper than `GENTLE` (8 degrees) and every end and fork is a level platform, by code at least
+  `LANDING` (1500) long and across (`brief.py`), longer where the arms overlap (`width/2 * tan(turn/2)`); the joint
+  disc is 1500 across however narrow the path. Gentler bends climb as they turn, pieces mitred. 8 degrees keeps the step on a
   bend's inside under ~7 mm (slope * width/2 * sin(bend)); `path_clear` allows 10 mm.
 - Routing searches cell + heading (`_graph`): every turn costs `TURN_COST * width * (1 - cos)`. Measured: below
   ~0.4 a route zigzags a cell wide and smoothing leaves it straight up the slope; 1.0 is fixed, not a parameter.
@@ -103,7 +104,6 @@ alternative to the generated ones.
 ## Next tasks
 
 1. Known limits, ask before fixing: `turns` with a middle stop (`Drawing.sample_lookout`) crowds swings round the
-   stop and runs out of ramp; `route` on `sample_stops` with `turns` can box the way back in; end and turn landings
-   are `width/2` long while the code asks 1500 x 1500 (offered, owner has not decided); default `width` is 1200,
-   the code asks 1500 where there is no stair (the notebook uses 1500).
+   stop and runs out of ramp; `route` on `sample_stops` with `turns` can box the way back in. `width` is the
+   owner's to set (default 1200; the code asks 1500 where there is no stair, the notebook uses 1500).
 2. Later, only when asked: Grasshopper components (follow `projects/roof/docs/development.md`); a PR description.

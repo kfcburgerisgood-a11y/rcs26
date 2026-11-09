@@ -22,6 +22,7 @@ from compas_vol import nodes
 from compas_vol.meshing import write_stl
 from compas_vol.primitives import VolPlane
 
+from .brief import LANDING
 from .contribution import Contribution, combine
 from .rock import VolRock
 from .routing import network, route
@@ -164,7 +165,7 @@ def ground(brief, host, drawing):
 
     Reads ``width``, ``spacing``, ``voxel``, ``search_top``, ``search_bottom``. Each path
     is followed every ``spacing`` mm, and at every vertex and pin. Its ends and
-    turns sharper than ``GENTLE`` are held level ``width / 2`` each way, further at a
+    turns sharper than ``GENTLE`` are held level, by code ``LANDING`` long, further at a
     sharp turn, where the two arms overlap: ``width / 2 x tan(turn / 2)``; a gentler
     bend climbs on as it turns. Where paths meet at an end, they are held level
     as far as each overlaps the most acute of the others. Each pin is held at its Z.
@@ -180,7 +181,9 @@ def ground(brief, host, drawing):
             raise ValueError("A path doubles back on itself at {}.".format(corners[1:][legs == 0][0].tolist()))
         at = np.concatenate([[0.0], np.cumsum(legs)])
         total = at[-1]
-        first, last = _end_reach(r, arms, n, 0, path[0]), _end_reach(r, arms, n, -1, path[-1])
+        # a platform LANDING long at each end, longer where it meets another path sharply
+        first = max(LANDING, _end_reach(r, arms, n, 0, path[0]))
+        last = max(LANDING, _end_reach(r, arms, n, -1, path[-1]))
         holds = [(0.0, min(first, total), None), (max(total - last, 0.0), total, None)]
         for i in range(1, len(corners) - 1):
             a, b = corners[i] - corners[i - 1], corners[i + 1] - corners[i]
@@ -190,7 +193,7 @@ def ground(brief, host, drawing):
                     raise ValueError("The path turns back on itself at ({:.0f}, {:.0f}), by {:.0f} degrees; "
                                      "at most {} can be walked.".format(*corners[i], math.degrees(turn), SHARPEST))
                 # the two arms overlap this far from a sharp corner: level all of it, past the next corner if need be
-                reach = r * max(1.0, math.tan(turn / 2))
+                reach = max(LANDING / 2, r * math.tan(turn / 2))     # a 1500 platform at least
                 holds.append((max(at[i] - reach, 0.0), min(at[i] + reach, total), None))
         for k, pin in enumerate(drawing.pins):
             s, off = _nearest(corners, at, pin)
@@ -333,10 +336,10 @@ def rest(brief, landing, host, profiles, drawing=None):
     >>> from roof_circulation import Brief, Drawing
     >>> from roof_circulation import RestBrief
     >>> brief = Brief(roughness=0.0)
-    >>> drawing = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1050)])
+    >>> drawing = Drawing([Polyline([[1000, 2000, 0], [17000, 2000, 0]])], [Point(9000, 2000, 1000)])
     >>> roof = host(brief)
     >>> profile = rest(brief, RestBrief(rise=300.0), roof, grade(brief, ground(brief, roof, drawing)))[0]
-    >>> len(profile.rests)                  # 450 up and 450 down, a rest every 300: one each way
+    >>> len(profile.rests)                  # 400 up and 400 down, a rest every 300: one each way
     2
     """
     if landing.rise <= 0:
@@ -580,7 +583,8 @@ def _band(brief, runs, below, above):
         x, y, z = runs[i].start if i < len(runs) else runs[-1].end
         down = z - min(t.bottom for t in touching) if below is None else below
         frame = Frame([x, y, z + (above - down) / 2], [1, 0, 0], [0, 1, 0])
-        parts.append(nodes.cylinder(frame, (touching[0].width or brief.width) / 2, down + above))
+        # a bay is its own width; a path's joint is a platform LANDING across however narrow the path
+        parts.append(nodes.cylinder(frame, (touching[0].width or max(brief.width, LANDING)) / 2, down + above))
     return nodes.boolean(parts, "union", 0)
 
 
@@ -623,7 +627,7 @@ def extent(brief, profiles):
 
     Before the grade, the paths are taken at the ground's height.
     """
-    r = brief.width / 2 + max([rest[4] for p in profiles for rest in p.rests] + [0.0])   # bays beside paths
+    r = max(brief.width, LANDING) / 2 + max([rest[4] for p in profiles for rest in p.rests] + [0.0])
     xs = np.concatenate([[0.0, brief.length]] + [np.concatenate([p.x - r, p.x + r]) for p in profiles])
     ys = np.concatenate([[0.0, brief.span]] + [np.concatenate([p.y - r, p.y + r]) for p in profiles])
     zs = np.concatenate([[0.0, brief.thickness + brief.roughness]] +

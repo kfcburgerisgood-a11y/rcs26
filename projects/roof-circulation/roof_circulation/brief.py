@@ -4,10 +4,11 @@ import dataclasses
 import json
 from dataclasses import dataclass
 
-__all__ = ["Brief", "RestBrief", "RAMP_LIMIT"]
+__all__ = ["Brief", "RestBrief", "RAMP_LIMIT", "LANDING"]
 
 RAMP_LIMIT = 1 / 12     # the steepest a ramp may ever be: no brief may ask for more
 WIDTH_LEAST = 1200.0    # the narrowest a path may be
+LANDING = 1500.0        # by code, a level platform 1500 x 1500 at every end and every turn
 
 
 @dataclass
